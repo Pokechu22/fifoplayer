@@ -13,6 +13,7 @@ void LoadDffData(const char* filename, FifoData& out)
 	header.FixEndianness();
 
 	header.file_version = 1;
+	header.frameCount = 1;
 	if (header.fileId != 0x0d01f1f0 || header.min_loader_version > 2)
 	{
 		printf ("file ID or version don't match!\n");
