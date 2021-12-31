@@ -344,7 +344,7 @@ QVariant DffModel::data(const QModelIndex& index, int role) const
 
 			if (data[0] == GX_LOAD_BP_REG)
 			{
-//				if (role == Qt::DisplayRole)
+				if (role == Qt::DisplayRole)
 				{
 					char reg_name[32] = { 0 };
 					GetBPRegInfo(data+1, reg_name, sizeof(reg_name), NULL, 0);
