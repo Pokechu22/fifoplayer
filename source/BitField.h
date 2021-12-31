@@ -108,6 +108,7 @@ public:
 		u32 host_storage = be32toh(storage);
 		host_storage = (host_storage & ~GetMask()) | ((val<<position) & GetMask());
 		storage = htobe32(host_storage);
+		return *this;
 	}
 
 	operator u32() const
