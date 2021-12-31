@@ -470,10 +470,10 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 						value_f *= view_scale;
 					}
 					if (address == 0x101d) {  // viewport x orig
-						value_f += s32(cur_analyzed_frame.efb_width) * x_offset;
+						value_f -= s32(cur_analyzed_frame.efb_width) * x_offset;
 					}
 					if (address == 0x101e) {  // viewport y orig
-						value_f += s32(cur_analyzed_frame.efb_height) * y_offset;
+						value_f -= s32(cur_analyzed_frame.efb_height) * y_offset;
 					}
 					wgPipe->F32 = value_f;
 				}
@@ -628,17 +628,33 @@ int main()
 		}
 
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP)
-			y_offset++;
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN)
 			y_offset--;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN)
+			y_offset++;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT)
-			x_offset++;
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT)
 			x_offset--;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT)
+			x_offset++;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_MINUS)
 			view_scale /= 2;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_PLUS)
 			view_scale *= 2;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A) {
+			f32 old_view_scale = view_scale;
+			s32 old_x_offset = x_offset;
+			s32 old_y_offset = y_offset;
+			view_scale = 1.0f;
+			for (int y = -1; y <= 1; y++) {
+				for (int x = -3; x <= 3; x++) {
+					x_offset = x;
+					y_offset = y;
+					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem);
+				}
+			}
+			view_scale = old_view_scale;
+			x_offset = old_x_offset;
+			y_offset = old_y_offset;
+		}
 
 		++cur_frame;
 		cur_frame = first_frame + ((cur_frame-first_frame) % (last_frame-first_frame+1));
