@@ -561,6 +561,15 @@ int main()
 			wgPipe->U8 = GX_LOAD_BP_REG;
 			wgPipe->U32 = (BPMEM_TRIGGER_EFB_COPY << 24) | copy.Hex;
 
+			// TODO: This isn't quite perfect, but it at least means that we
+			// have the right width (height might be wrong, e.g. for NES games)
+			rmode->fbWidth = cur_analyzed_frame.efb_width;
+			rmode->viWidth = cur_analyzed_frame.efb_width;
+			rmode->xfbHeight = cur_analyzed_frame.efb_height;
+			rmode->efbHeight = cur_analyzed_frame.efb_height;
+			rmode->viHeight = cur_analyzed_frame.efb_height;
+			VIDEO_Configure(rmode);
+
 			VIDEO_SetNextFramebuffer(frameBuffer[fb]);
 			if (first_frame)
 			{

@@ -195,6 +195,8 @@ struct AnalyzedObject
 struct AnalyzedFrameInfo
 {
 	std::vector<AnalyzedObject> objects;
+	u32 efb_width = 0;
+	u32 efb_height = 0;
 
 //	std::vector<MemoryUpdate> memory_updates;
 };
@@ -236,7 +238,7 @@ public:
 			{
 				bool was_drawing = m_drawingObject;
 				bool unused;
-				u32 cmd_size = DecodeCommandLegacy(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem);
+				u32 cmd_size = DecodeCommandLegacy(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem, dst_frame.efb_width, dst_frame.efb_height);
 
 				// TODO: Check that cmd_size != 0
 
@@ -297,7 +299,8 @@ public:
 			{
 				bool was_drawing = is_drawing;
 				bool is_nontrivial_command = false;
-				u32 cmd_size = DecodeCommandLegacy(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem);
+				u32 efb_width = 0, efb_height = 0;  // ignored
+				u32 cmd_size = DecodeCommandLegacy(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem, efb_width, efb_height);
 
 				// Found a nontrivial command
 				// Before writing it, flush all state changes in the optimized
@@ -494,7 +497,7 @@ public:
 		return data - data_start;
 	}
 
-	static u32 DecodeCommandLegacy(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem)
+	static u32 DecodeCommandLegacy(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem, u32& efb_width, u32& efb_height)
 	{
 		u8* data_start = data;
 
@@ -557,9 +560,15 @@ public:
 				//FifoAnalyzer::LoadBPReg(bp, m_BpMem);
 				// TODO: Load BP reg..
 
-				// TODO
-//				if (bp.address == BPMEM_TRIGGER_EFB_COPY)
-//					StoreEfbCopyRegion();
+				if (regid == BPMEM_EFB_WH)
+				{
+					// Record the current EFB size - this may happen multiple times,
+					// but since we create a new frame on an XFB copy, the last
+					// value that is set will be the size for the XFB copy.
+					X10Y10 wh{.hex = cmd2};
+					efb_width = wh.x;
+					efb_height = wh.y;
+				}
 
 				if ((regid == BPMEM_TRIGGER_EFB_COPY
 					|| regid == BPMEM_CLEARBBOX1

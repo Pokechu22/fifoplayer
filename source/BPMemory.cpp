@@ -139,10 +139,9 @@ void GetBPRegInfo(const u8* data, char* name, size_t name_size, char* desc, size
 		}
 		break;
 
-	case BPMEM_EFB_BR: // 0x4A
+	case BPMEM_EFB_WH: // 0x4A
 		{
-			// TODO: Misleading name, should be BPMEM_EFB_WH instead
-			SetRegName(BPMEM_EFB_BR);
+			SetRegName(BPMEM_EFB_WH);
 			X10Y10& width_height = *(X10Y10*)&cmddata;
 			snprintf(desc, desc_size, "Width: %d\nHeight: %d", width_height.x+1, width_height.y+1);
 		}

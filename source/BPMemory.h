@@ -38,7 +38,7 @@
 #define BPMEM_PE_TOKEN_ID	   0x47
 #define BPMEM_PE_TOKEN_INT_ID  0x48
 #define BPMEM_EFB_TL           0x49
-#define BPMEM_EFB_BR           0x4A
+#define BPMEM_EFB_WH           0x4A
 #define BPMEM_EFB_ADDR         0x4B
 #define BPMEM_MIPMAP_STRIDE    0x4D
 #define BPMEM_COPYYSCALE       0x4E
