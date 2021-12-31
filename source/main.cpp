@@ -268,6 +268,304 @@ bool CheckIfHomePressed()
 	return false;
 }
 
+void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem) {
+	const FifoFrameData& cur_frame_data = fifo_data.frames[cur_frame];
+	const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
+	if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
+	{
+		for (unsigned int frameNum = 0; frameNum < fifo_data.frames.size(); ++frameNum)
+		{
+			const FifoFrameData &frame = fifo_data.frames[frameNum];
+			for (unsigned int i = 0; i < frame.memoryUpdates.size(); ++i)
+			{
+				PrepareMemoryLoad(frame.memoryUpdates[i].address, frame.memoryUpdates[i].dataSize);
+				//if (early_mem_updates)
+				//	memcpy(GetPointer(frame.memoryUpdates[i].address), &frame.memoryUpdates[i].data[0], frame.memoryUpdates[i].data.size());
+				//DCFlushRange(GetPointer(frame.memoryUpdates[i].address), frame.memoryUpdates[i].dataSize);
+			}
+		}
+
+		ApplyInitialState(fifo_data, tex_addr, cpmem);
+	}
+
+
+	u32 last_pos = 0;
+	for (std::vector<AnalyzedObject>::const_iterator cur_object = cur_analyzed_frame.objects.begin();
+		cur_object != cur_analyzed_frame.objects.end(); ++cur_object)
+	{
+		for (std::vector<u32>::const_iterator cur_command = cur_object->cmd_starts.begin();
+			cur_command != cur_object->cmd_starts.end(); ++cur_command)
+		{
+			const int cmd_index = cur_command-cur_object->cmd_starts.begin();
+			const u8* cmd_data = &cur_frame_data.fifoData[*cur_command];
+
+			const FifoFrameData &frame = fifo_data.frames[cur_frame];
+			for (unsigned int update = 0; update < frame.memoryUpdates.size(); ++update)
+			{
+				if ((!last_pos || frame.memoryUpdates[update].fifoPosition > last_pos) && frame.memoryUpdates[update].fifoPosition <= *cur_command)
+				{
+//					PrepareMemoryLoad(frame.memoryUpdates[update].address, frame.memoryUpdates[update].dataSize);
+					fseek(fifo_data.file, frame.memoryUpdates[update].dataOffset, SEEK_SET);
+					fread(GetPointer(frame.memoryUpdates[update].address), frame.memoryUpdates[update].dataSize, 1, fifo_data.file);
+
+					// DCFlushRange expects aligned addresses
+					u32 off = frame.memoryUpdates[update].address % DEF_ALIGN;
+					DCFlushRange(GetPointer(frame.memoryUpdates[update].address - off), frame.memoryUpdates[update].dataSize+off);
+				}
+			}
+			last_pos = *cur_command;
+
+			if (!cur_object->cmd_enabled[cmd_index])
+				continue;
+
+			if (cmd_data[0] == GX_LOAD_BP_REG)
+			{
+				// Patch texture addresses
+				if ((cmd_data[1] >= BPMEM_TX_SETIMAGE3 && cmd_data[1] < BPMEM_TX_SETIMAGE3+4) ||
+					(cmd_data[1] >= BPMEM_TX_SETIMAGE3_4 && cmd_data[1] < BPMEM_TX_SETIMAGE3_4+4))
+				{
+					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
+					TexImage3* img = (TexImage3*)&tempval;
+					u32 addr = img->image_base << 5; // TODO: Proper mask?
+					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
+					img->image_base = new_addr >> 5;
+					u32 new_value = /*h32tobe*/(tempval);
+
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					wgPipe->U32 = ((u32)cmd_data[1]<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+
+					if (cmd_data[1] >= BPMEM_TX_SETIMAGE3 &&
+						cmd_data[1] < BPMEM_TX_SETIMAGE3+4)
+						tex_addr[cmd_data[1] - BPMEM_TX_SETIMAGE3] = new_addr;
+					else
+						tex_addr[4 + cmd_data[1] - BPMEM_TX_SETIMAGE3_4] = new_addr;
+				}
+				else if (cmd_data[1] == BPMEM_PRELOAD_ADDR)
+				{
+					// TODO
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					wgPipe->U8 = cmd_data[1];
+					wgPipe->U8 = cmd_data[2];
+					wgPipe->U8 = cmd_data[3];
+					wgPipe->U8 = cmd_data[4];
+#endif
+				}
+				else if (cmd_data[1] == BPMEM_LOADTLUT0)
+				{
+#if 1
+					// TODO: Untested
+					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
+					u32 addr = tempval << 5; // TODO: Proper mask?
+					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
+					u32 new_value = new_addr >> 5;
+
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = cmd_data[0];
+					wgPipe->U32 = (BPMEM_LOADTLUT0<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+#endif
+				}
+				// TODO: Check for BPMEM_PRELOAD_MODE
+				else if (cmd_data[1] == BPMEM_EFB_ADDR)
+				{
+					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
+					u32 addr = (tempval & 0xFFFFFF) << 5; // TODO
+					efbcopy_target = addr;
+
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					wgPipe->U8 = cmd_data[1];
+					wgPipe->U8 = cmd_data[2];
+					wgPipe->U8 = cmd_data[3];
+					wgPipe->U8 = cmd_data[4];
+#endif
+				}
+				else if (cmd_data[1] == BPMEM_TRIGGER_EFB_COPY)
+				{
+					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
+					UPE_Copy* copy = (UPE_Copy*)&tempval;
+
+					// Version 1 did not support EFB->XFB copies
+					if (fifo_data.version >= 2 || !copy->copy_to_xfb)
+					{
+						bool update_textures = PrepareMemoryLoad(efbcopy_target, 640*480*4); // TODO: Size!!
+						u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(efbcopy_target));
+						u32 new_value = /*h32tobe*/((BPMEM_EFB_ADDR<<24) | (new_addr >> 5));
+
+#if ENABLE_CONSOLE!=1
+						// Update target address
+						wgPipe->U8 = 0x61;
+						wgPipe->U32 = (BPMEM_EFB_ADDR<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+
+						// Gotta fix texture offsets if memory map layout changed
+						if (update_textures)
+						{
+							for (int k = 0; k < 8; ++k)
+							{
+								u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(tex_addr[k]));
+								u32 new_value = /*h32tobe*/(new_addr>>5);
+
+#if ENABLE_CONSOLE!=1
+								wgPipe->U8 = 0x61;
+								u32 reg = (k < 4) ? (BPMEM_TX_SETIMAGE3+k) : (BPMEM_TX_SETIMAGE3_4+(k-4));
+								wgPipe->U32 = (reg<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+							}
+						}
+					}
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					wgPipe->U8 = cmd_data[1];
+					wgPipe->U8 = cmd_data[2];
+					wgPipe->U8 = cmd_data[3];
+					wgPipe->U8 = cmd_data[4];
+#endif
+				}
+				else
+				{
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					wgPipe->U8 = cmd_data[1];
+					wgPipe->U8 = cmd_data[2];
+					wgPipe->U8 = cmd_data[3];
+					wgPipe->U8 = cmd_data[4];
+#endif
+				}
+			}
+			else if (cmd_data[0] == GX_LOAD_CP_REG)
+			{
+				u8 cmd2 = cmd_data[1];
+				u32 value = *(u32*)&cmd_data[2]; // TODO: Endiannes (only works on Wii)
+				if ((cmd2 & 0xF0) == 0xA0) // TODO: readability!
+					value = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(value));
+
+#if ENABLE_CONSOLE!=1
+				wgPipe->U8 = GX_LOAD_CP_REG;
+				wgPipe->U8 = cmd_data[1];
+				wgPipe->U32 = value;
+#endif
+
+				cpmem.LoadReg(cmd2, value);
+			}
+			else if (cmd_data[0] == GX_LOAD_XF_REG)
+			{
+				// Load data directly instead of going through the loop again for no reason
+
+				u32 cmd2 = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
+				u8 streamSize = ((cmd2 >> 16) & 15) + 1;
+
+#if ENABLE_CONSOLE!=1
+				wgPipe->U8 = GX_LOAD_XF_REG;
+				wgPipe->U32 = cmd2;
+
+				for (u8 i = 0; i < streamSize; i++) {
+					u32 address = (cmd2 & 0xffff) + i;
+					f32 value_f;
+					memcpy(&value_f, &cmd_data[5+4*i], sizeof(f32));
+					if (address == 0x101a || address == 0x101b) {  // viewport width/height
+						value_f *= view_scale;
+					}
+					if (address == 0x101d) {  // viewport x orig
+						value_f += s32(cur_analyzed_frame.efb_width) * x_offset;
+					}
+					if (address == 0x101e) {  // viewport y orig
+						value_f += s32(cur_analyzed_frame.efb_height) * y_offset;
+					}
+					wgPipe->F32 = value_f;
+				}
+#endif
+			}
+			else if(cmd_data[0] == GX_LOAD_INDX_A ||
+					cmd_data[0] == GX_LOAD_INDX_B ||
+					cmd_data[0] == GX_LOAD_INDX_C ||
+					cmd_data[0] == GX_LOAD_INDX_D)
+			{
+#if ENABLE_CONSOLE!=1
+				wgPipe->U8 = cmd_data[0];
+				wgPipe->U8 = cmd_data[1];
+				wgPipe->U8 = cmd_data[2];
+				wgPipe->U8 = cmd_data[3];
+				wgPipe->U8 = cmd_data[4];
+#endif
+			}
+			else if (cmd_data[0] & 0x80)
+			{
+				u32 vtxAttrGroup = cmd_data[0] & GX_VAT_MASK;
+				int vertexSize = CalculateVertexSize(vtxAttrGroup, cpmem);
+
+				u16 streamSize = *(u16*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
+
+#if ENABLE_CONSOLE!=1
+				wgPipe->U8 = cmd_data[0];
+				wgPipe->U16 = streamSize;
+				for (int byte = 0; byte < streamSize * vertexSize; ++byte)
+					wgPipe->U8 = cmd_data[3+byte];
+#endif
+			}
+			else
+			{
+				u32 size = cur_object->last_cmd_byte - *cur_command + 1;
+				if (cur_command+1 != cur_object->cmd_starts.end() && size > *(cur_command+1)-*cur_command)
+					size = *(cur_command+1)-*cur_command;
+
+#if ENABLE_CONSOLE!=1
+				for (u32 addr = 0; addr < size; ++addr) {
+					// TODO: Push u32s instead
+					wgPipe->U8 = cmd_data[addr];
+				}
+#endif
+			}
+		}
+	}
+
+#if ENABLE_CONSOLE!=1
+	if (fifo_data.version < 2)
+	{
+		// finish frame for legacy dff files
+		//
+		// Note that GX_CopyDisp(frameBuffer[fb],GX_TRUE) uses an internal state
+		// which is out of sync with the dff_data, so we're manually writing
+		// to the EFB copy registers instead.
+		wgPipe->U8 = GX_LOAD_BP_REG;
+		wgPipe->U32 = (BPMEM_EFB_ADDR << 24) | ((MEM_VIRTUAL_TO_PHYSICAL(frameBuffer[fb]) >> 5) & 0xFFFFFF);
+
+		u32 temp;
+		UPE_Copy& copy = *(UPE_Copy*)&temp;
+		copy.Hex = 0;
+		copy.clear = 1;
+		copy.copy_to_xfb = 1;
+		wgPipe->U8 = GX_LOAD_BP_REG;
+		wgPipe->U32 = (BPMEM_TRIGGER_EFB_COPY << 24) | copy.Hex;
+
+		GX_Flush();
+		GX_WaitDrawDone();
+
+		// TODO: This isn't quite perfect, but it at least means that we
+		// have the right width (height might be wrong, e.g. for NES games)
+		rmode->fbWidth = cur_analyzed_frame.efb_width;
+		rmode->viWidth = cur_analyzed_frame.efb_width;
+		rmode->xfbHeight = cur_analyzed_frame.efb_height;
+		rmode->efbHeight = cur_analyzed_frame.efb_height;
+		rmode->viHeight = cur_analyzed_frame.efb_height;
+		VIDEO_Configure(rmode);
+
+		VIDEO_SetNextFramebuffer(frameBuffer[fb]);
+		if (first_frame)
+		{
+			VIDEO_SetBlack(FALSE);
+			first_frame = 0;
+		}
+	}
+#endif
+	VIDEO_WaitVSync();
+	VIDEO_Flush();
+	fb ^= 1;
+}
+
 int main()
 {
 	Init();
@@ -304,301 +602,7 @@ int main()
 	{
 		CheckForNetworkEvents(server_socket, client_socket, fifo_data.frames, analyzed_frames);
 
-		FifoFrameData& cur_frame_data = fifo_data.frames[cur_frame];
-		AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
-		if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
-		{
-			for (unsigned int frameNum = 0; frameNum < fifo_data.frames.size(); ++frameNum)
-			{
-				const FifoFrameData &frame = fifo_data.frames[frameNum];
-				for (unsigned int i = 0; i < frame.memoryUpdates.size(); ++i)
-				{
-					PrepareMemoryLoad(frame.memoryUpdates[i].address, frame.memoryUpdates[i].dataSize);
-					//if (early_mem_updates)
-					//	memcpy(GetPointer(frame.memoryUpdates[i].address), &frame.memoryUpdates[i].data[0], frame.memoryUpdates[i].data.size());
-					//DCFlushRange(GetPointer(frame.memoryUpdates[i].address), frame.memoryUpdates[i].dataSize);
-				}
-			}
-
-			ApplyInitialState(fifo_data, tex_addr, cpmem);
-		}
-
-
-		u32 last_pos = 0;
-		for (std::vector<AnalyzedObject>::iterator cur_object = cur_analyzed_frame.objects.begin();
-			cur_object != cur_analyzed_frame.objects.end(); ++cur_object)
-		{
-			for (std::vector<u32>::iterator cur_command = cur_object->cmd_starts.begin();
-				cur_command != cur_object->cmd_starts.end(); ++cur_command)
-			{
-				const int cmd_index = cur_command-cur_object->cmd_starts.begin();
-				u8* cmd_data = &cur_frame_data.fifoData[*cur_command];
-
-				const FifoFrameData &frame = fifo_data.frames[cur_frame];
-				for (unsigned int update = 0; update < frame.memoryUpdates.size(); ++update)
-				{
-					if ((!last_pos || frame.memoryUpdates[update].fifoPosition > last_pos) && frame.memoryUpdates[update].fifoPosition <= *cur_command)
-					{
-	//					PrepareMemoryLoad(frame.memoryUpdates[update].address, frame.memoryUpdates[update].dataSize);
-						fseek(fifo_data.file, frame.memoryUpdates[update].dataOffset, SEEK_SET);
-						fread(GetPointer(frame.memoryUpdates[update].address), frame.memoryUpdates[update].dataSize, 1, fifo_data.file);
-
-						// DCFlushRange expects aligned addresses
-						u32 off = frame.memoryUpdates[update].address % DEF_ALIGN;
-						DCFlushRange(GetPointer(frame.memoryUpdates[update].address - off), frame.memoryUpdates[update].dataSize+off);
-					}
-				}
-				last_pos = *cur_command;
-
-				if (!cur_object->cmd_enabled[cmd_index])
-					continue;
-
-				if (cmd_data[0] == GX_LOAD_BP_REG)
-				{
-					// Patch texture addresses
-					if ((cmd_data[1] >= BPMEM_TX_SETIMAGE3 && cmd_data[1] < BPMEM_TX_SETIMAGE3+4) ||
-						(cmd_data[1] >= BPMEM_TX_SETIMAGE3_4 && cmd_data[1] < BPMEM_TX_SETIMAGE3_4+4))
-					{
-						u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-						TexImage3* img = (TexImage3*)&tempval;
-						u32 addr = img->image_base << 5; // TODO: Proper mask?
-						u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-						img->image_base = new_addr >> 5;
-						u32 new_value = /*h32tobe*/(tempval);
-
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = 0x61;
-						wgPipe->U32 = ((u32)cmd_data[1]<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-
-						if (cmd_data[1] >= BPMEM_TX_SETIMAGE3 &&
-							cmd_data[1] < BPMEM_TX_SETIMAGE3+4)
-							tex_addr[cmd_data[1] - BPMEM_TX_SETIMAGE3] = new_addr;
-						else
-							tex_addr[4 + cmd_data[1] - BPMEM_TX_SETIMAGE3_4] = new_addr;
-					}
-					else if (cmd_data[1] == BPMEM_PRELOAD_ADDR)
-					{
-						// TODO
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = 0x61;
-						wgPipe->U8 = cmd_data[1];
-						wgPipe->U8 = cmd_data[2];
-						wgPipe->U8 = cmd_data[3];
-						wgPipe->U8 = cmd_data[4];
-#endif
-					}
-					else if (cmd_data[1] == BPMEM_LOADTLUT0)
-					{
-#if 1
-						// TODO: Untested
-						u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-						u32 addr = tempval << 5; // TODO: Proper mask?
-						u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-						u32 new_value = new_addr >> 5;
-
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = cmd_data[0];
-						wgPipe->U32 = (BPMEM_LOADTLUT0<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-#endif
-					}
-					// TODO: Check for BPMEM_PRELOAD_MODE
-					else if (cmd_data[1] == BPMEM_EFB_ADDR)
-					{
-						u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-						u32 addr = (tempval & 0xFFFFFF) << 5; // TODO
-						efbcopy_target = addr;
-
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = 0x61;
-						wgPipe->U8 = cmd_data[1];
-						wgPipe->U8 = cmd_data[2];
-						wgPipe->U8 = cmd_data[3];
-						wgPipe->U8 = cmd_data[4];
-#endif
-					}
-					else if (cmd_data[1] == BPMEM_TRIGGER_EFB_COPY)
-					{
-						u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-						UPE_Copy* copy = (UPE_Copy*)&tempval;
-
-						// Version 1 did not support EFB->XFB copies
-						if (fifo_data.version >= 2 || !copy->copy_to_xfb)
-						{
-							bool update_textures = PrepareMemoryLoad(efbcopy_target, 640*480*4); // TODO: Size!!
-							u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(efbcopy_target));
-							u32 new_value = /*h32tobe*/((BPMEM_EFB_ADDR<<24) | (new_addr >> 5));
-
-#if ENABLE_CONSOLE!=1
-							// Update target address
-							wgPipe->U8 = 0x61;
-							wgPipe->U32 = (BPMEM_EFB_ADDR<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-
-							// Gotta fix texture offsets if memory map layout changed
-							if (update_textures)
-							{
-								for (int k = 0; k < 8; ++k)
-								{
-									u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(tex_addr[k]));
-									u32 new_value = /*h32tobe*/(new_addr>>5);
-
-#if ENABLE_CONSOLE!=1
-									wgPipe->U8 = 0x61;
-									u32 reg = (k < 4) ? (BPMEM_TX_SETIMAGE3+k) : (BPMEM_TX_SETIMAGE3_4+(k-4));
-									wgPipe->U32 = (reg<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-								}
-							}
-						}
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = 0x61;
-						wgPipe->U8 = cmd_data[1];
-						wgPipe->U8 = cmd_data[2];
-						wgPipe->U8 = cmd_data[3];
-						wgPipe->U8 = cmd_data[4];
-#endif
-					}
-					else
-					{
-#if ENABLE_CONSOLE!=1
-						wgPipe->U8 = 0x61;
-						wgPipe->U8 = cmd_data[1];
-						wgPipe->U8 = cmd_data[2];
-						wgPipe->U8 = cmd_data[3];
-						wgPipe->U8 = cmd_data[4];
-#endif
-					}
-				}
-				else if (cmd_data[0] == GX_LOAD_CP_REG)
-				{
-					u8 cmd2 = cmd_data[1];
-					u32 value = *(u32*)&cmd_data[2]; // TODO: Endiannes (only works on Wii)
-					if ((cmd2 & 0xF0) == 0xA0) // TODO: readability!
-						value = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(value));
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = GX_LOAD_CP_REG;
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U32 = value;
-#endif
-
-					cpmem.LoadReg(cmd2, value);
-				}
-				else if (cmd_data[0] == GX_LOAD_XF_REG)
-				{
-					// Load data directly instead of going through the loop again for no reason
-
-					u32 cmd2 = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
-					u8 streamSize = ((cmd2 >> 16) & 15) + 1;
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = GX_LOAD_XF_REG;
-					wgPipe->U32 = cmd2;
-
-					for (u8 i = 0; i < streamSize; i++) {
-						u32 address = (cmd2 & 0xffff) + i;
-						f32 value_f;
-						memcpy(&value_f, &cmd_data[5+4*i], sizeof(f32));
-						if (address == 0x101a || address == 0x101b) {  // viewport width/height
-							value_f *= view_scale;
-						}
-						if (address == 0x101d) {  // viewport x orig
-							value_f += s32(cur_analyzed_frame.efb_width) * x_offset;
-						}
-						if (address == 0x101e) {  // viewport y orig
-							value_f += s32(cur_analyzed_frame.efb_height) * y_offset;
-						}
-						wgPipe->F32 = value_f;
-					}
-#endif
-				}
-				else if(cmd_data[0] == GX_LOAD_INDX_A ||
-						cmd_data[0] == GX_LOAD_INDX_B ||
-						cmd_data[0] == GX_LOAD_INDX_C ||
-						cmd_data[0] == GX_LOAD_INDX_D)
-				{
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = cmd_data[0];
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U8 = cmd_data[2];
-					wgPipe->U8 = cmd_data[3];
-					wgPipe->U8 = cmd_data[4];
-#endif
-				}
-				else if (cmd_data[0] & 0x80)
-				{
-					u32 vtxAttrGroup = cmd_data[0] & GX_VAT_MASK;
-					int vertexSize = CalculateVertexSize(vtxAttrGroup, cpmem);
-
-					u16 streamSize = *(u16*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = cmd_data[0];
-					wgPipe->U16 = streamSize;
-					for (int byte = 0; byte < streamSize * vertexSize; ++byte)
-						wgPipe->U8 = cmd_data[3+byte];
-#endif
-				}
-				else
-				{
-					u32 size = cur_object->last_cmd_byte - *cur_command + 1;
-					if (cur_command+1 != cur_object->cmd_starts.end() && size > *(cur_command+1)-*cur_command)
-						size = *(cur_command+1)-*cur_command;
-
-#if ENABLE_CONSOLE!=1
-					for (u32 addr = 0; addr < size; ++addr) {
-						// TODO: Push u32s instead
-						wgPipe->U8 = cmd_data[addr];
-					}
-#endif
-				}
-			}
-		}
-
-#if ENABLE_CONSOLE!=1
-		if (fifo_data.version < 2)
-		{
-			// finish frame for legacy dff files
-			//
-			// Note that GX_CopyDisp(frameBuffer[fb],GX_TRUE) uses an internal state
-			// which is out of sync with the dff_data, so we're manually writing
-			// to the EFB copy registers instead.
-			wgPipe->U8 = GX_LOAD_BP_REG;
-			wgPipe->U32 = (BPMEM_EFB_ADDR << 24) | ((MEM_VIRTUAL_TO_PHYSICAL(frameBuffer[fb]) >> 5) & 0xFFFFFF);
-
-			u32 temp;
-			UPE_Copy& copy = *(UPE_Copy*)&temp;
-			copy.Hex = 0;
-			copy.clear = 1;
-			copy.copy_to_xfb = 1;
-			wgPipe->U8 = GX_LOAD_BP_REG;
-			wgPipe->U32 = (BPMEM_TRIGGER_EFB_COPY << 24) | copy.Hex;
-
-			GX_Flush();
-			GX_WaitDrawDone();
-
-			// TODO: This isn't quite perfect, but it at least means that we
-			// have the right width (height might be wrong, e.g. for NES games)
-			rmode->fbWidth = cur_analyzed_frame.efb_width;
-			rmode->viWidth = cur_analyzed_frame.efb_width;
-			rmode->xfbHeight = cur_analyzed_frame.efb_height;
-			rmode->efbHeight = cur_analyzed_frame.efb_height;
-			rmode->viHeight = cur_analyzed_frame.efb_height;
-			VIDEO_Configure(rmode);
-
-			VIDEO_SetNextFramebuffer(frameBuffer[fb]);
-			if (first_frame)
-			{
-				VIDEO_SetBlack(FALSE);
-				first_frame = 0;
-			}
-		}
-#endif
-		VIDEO_WaitVSync();
-		VIDEO_Flush();
-		fb ^= 1;
+		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem);
 
 		// TODO: Menu stuff
 		// reset GX state
