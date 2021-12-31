@@ -34,6 +34,10 @@ static u32 efbcopy_target = 0;
 
 static u32 tex_addr[8] = {0};
 
+f32 view_scale = 1.0f;
+s32 x_offset = 0;
+s32 y_offset = 0;
+
 static vu16* const _viReg = (u16*)0xCC002000;
 using namespace VideoInterface;
 void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& target_cpmem)
@@ -493,8 +497,21 @@ int main()
 					wgPipe->U8 = GX_LOAD_XF_REG;
 					wgPipe->U32 = cmd2;
 
-					for (int byte = 0; byte < streamSize * 4; ++byte)
-						wgPipe->U8 = cmd_data[5+byte];
+					for (u8 i = 0; i < streamSize; i++) {
+						u32 address = (cmd2 & 0xffff) + i;
+						f32 value_f;
+						memcpy(&value_f, &cmd_data[5+4*i], sizeof(f32));
+						if (address == 0x101a || address == 0x101b) {  // viewport width/height
+							value_f *= view_scale;
+						}
+						if (address == 0x101d) {  // viewport x orig
+							value_f += s32(cur_analyzed_frame.efb_width) * x_offset;
+						}
+						if (address == 0x101e) {  // viewport y orig
+							value_f += s32(cur_analyzed_frame.efb_height) * y_offset;
+						}
+						wgPipe->F32 = value_f;
+					}
 #endif
 				}
 				else if(cmd_data[0] == GX_LOAD_INDX_A ||
@@ -604,6 +621,19 @@ int main()
 			fclose(fifo_data.file);
 			exit(0);
 		}
+
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP)
+			y_offset++;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN)
+			y_offset--;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT)
+			x_offset++;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT)
+			x_offset--;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_MINUS)
+			view_scale /= 2;
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_PLUS)
+			view_scale *= 2;
 
 		++cur_frame;
 		cur_frame = first_frame + ((cur_frame-first_frame) % (last_frame-first_frame+1));
