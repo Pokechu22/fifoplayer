@@ -566,8 +566,8 @@ public:
 					// but since we create a new frame on an XFB copy, the last
 					// value that is set will be the size for the XFB copy.
 					X10Y10 wh{.hex = cmd2};
-					efb_width = wh.x;
-					efb_height = wh.y;
+					efb_width = wh.x + 1;
+					efb_height = wh.y + 1;
 				}
 
 				if ((regid == BPMEM_TRIGGER_EFB_COPY
