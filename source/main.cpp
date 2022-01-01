@@ -15,6 +15,10 @@
 #include <fat.h>
 #include <dirent.h>
 #include <network.h>
+
+#include <png.h>
+#include <zlib.h>
+
 #include "protocol.h"
 #include "BPMemory.h"
 #include "DffFile.h"
@@ -25,10 +29,12 @@
 
 #include "VideoInterface.h"
 
+#define EFB_WIDTH 640
+#define EFB_HEIGHT 528
+
 typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint8_t u8;
-
 
 static u32 efbcopy_target = 0;
 
@@ -206,6 +212,11 @@ void OptimizeFifoData(FifoData& fifo_data)
 
 #define DEFAULT_FIFO_SIZE   (256*1024)
 static void *frameBuffer[2] = { NULL, NULL};
+static u32* screenshot_buffer = NULL;
+static char* screenshot_dir = NULL;
+
+void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height);
+
 GXRModeObj *rmode;
 
 u32 fb = 0;
@@ -221,6 +232,7 @@ void Init()
 #if ENABLE_CONSOLE!=1
 	frameBuffer[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode)); // TODO: Shouldn't require manual framebuffer management!
 	frameBuffer[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+	screenshot_buffer = (u32*)malloc(EFB_WIDTH * EFB_HEIGHT * sizeof(u32));
 	VIDEO_Configure(rmode);
 	VIDEO_SetNextFramebuffer(frameBuffer[fb]);
 	VIDEO_SetBlack(FALSE);
@@ -268,7 +280,7 @@ bool CheckIfHomePressed()
 	return false;
 }
 
-void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem) {
+void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem, bool screenshot) {
 	const FifoFrameData& cur_frame_data = fifo_data.frames[cur_frame];
 	const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
 	if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
@@ -525,6 +537,27 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 #if ENABLE_CONSOLE!=1
 	if (fifo_data.version < 2)
 	{
+		if (screenshot)
+		{
+			GX_Flush();
+			GX_WaitDrawDone();
+
+			GXColor color;
+			for (u32 y = 0; y < cur_analyzed_frame.efb_height; y++)
+			{
+				for (u32 x = 0; x < cur_analyzed_frame.efb_width; x++)
+				{
+					GX_PeekARGB(x, y, &color);
+					u32 val = ((u32) color.a) << 24;
+					val |= ((u32) color.r) << 16;
+					val |= ((u32) color.g) << 8;
+					val |= color.b;
+
+					screenshot_buffer[x + y * EFB_WIDTH] = val;
+				}
+			}
+		}
+
 		// finish frame for legacy dff files
 		//
 		// Note that GX_CopyDisp(frameBuffer[fb],GX_TRUE) uses an internal state
@@ -533,9 +566,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 		wgPipe->U8 = GX_LOAD_BP_REG;
 		wgPipe->U32 = (BPMEM_EFB_ADDR << 24) | ((MEM_VIRTUAL_TO_PHYSICAL(frameBuffer[fb]) >> 5) & 0xFFFFFF);
 
-		u32 temp;
-		UPE_Copy& copy = *(UPE_Copy*)&temp;
-		copy.Hex = 0;
+		UPE_Copy copy{.Hex = 0};
 		copy.clear = 1;
 		copy.copy_to_xfb = 1;
 		wgPipe->U8 = GX_LOAD_BP_REG;
@@ -598,11 +629,12 @@ int main()
 	int first_frame = 0;
 	int last_frame = first_frame + fifo_data.frames.size()-1;
 	int cur_frame = first_frame;
+	int screenshot_number = 1;
 	while (processing)
 	{
 		CheckForNetworkEvents(server_socket, client_socket, fifo_data.frames, analyzed_frames);
 
-		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem);
+		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false);
 
 		// TODO: Menu stuff
 		// reset GX state
@@ -639,7 +671,8 @@ int main()
 			view_scale /= 2;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_PLUS)
 			view_scale *= 2;
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A) {
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A)
+		{
 			f32 old_view_scale = view_scale;
 			s32 old_x_offset = x_offset;
 			s32 old_y_offset = y_offset;
@@ -648,12 +681,29 @@ int main()
 				for (int x = -3; x <= 3; x++) {
 					x_offset = x;
 					y_offset = y;
-					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem);
+					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
+					SaveScreenshot(screenshot_number, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
 				}
 			}
+			// To combine images, use ImageMagick - see https://superuser.com/a/290679
+			// Unfortunately 1_x{-3..3}_y{-1..1}.png doesn't work (it expands to 1_x-3_y-1 1_x-3_y0 1_x-3_y1, which is the wrong order), so we do multiple temporary images instead
+			// N=1
+			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y-1.png ${N}_y-1.png
+			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y0.png ${N}_y0.png
+			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y1.png ${N}_y1.png
+			// montage -mode concatenate -tile 1x3 ${N}_y{-1..1}.png ../${N}.png
+			// rm ${N}_y{-1..1}.png
+			// In 1 line:
+			// N=1; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y-1.png ${N}_y-1.png; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y0.png ${N}_y0.png; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y1.png ${N}_y1.png; montage -mode concatenate -tile 1x3 ${N}_y{-1..1}.png ../${N}.png; rm ${N}_y{-1..1}.png
 			view_scale = old_view_scale;
 			x_offset = old_x_offset;
 			y_offset = old_y_offset;
+			screenshot_number++;
+		}
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B)
+		{
+			DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
+			SaveScreenshot(screenshot_number++, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
 		}
 
 		++cur_frame;
@@ -663,4 +713,65 @@ int main()
 	fclose(fifo_data.file);
 
 	return 0;
+}
+
+void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
+	if (screenshot_dir == NULL) {
+		time_t rawtime;
+		time(&rawtime);
+		struct tm* curtime = localtime(&rawtime);
+		screenshot_dir = (char*)malloc(100);
+		strftime(screenshot_dir, 100, "sd:/Test_%H%M%S", curtime);
+		mkdir(screenshot_dir, 0777);
+	}
+
+	char filename[256];
+	if (view_scale != 1.0f)
+	{
+		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d_scale%f.png",
+		         screenshot_dir, screenshot_number, x_offset, y_offset, view_scale);
+	}
+	else
+	{
+		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d.png",
+		         screenshot_dir, screenshot_number, x_offset, y_offset);
+	}
+
+	png_bytep *row_pointers = (png_bytep *) malloc(efb_height * sizeof(png_bytep));
+
+	FILE *fp = fopen(filename, "wb");
+	if (!fp)
+		return;
+
+	png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, 0, 0, 0);
+	if (!png_ptr)
+		return;
+
+	png_infop info_ptr = png_create_info_struct(png_ptr);
+	if (!info_ptr)
+		return;
+
+	if (setjmp(png_jmpbuf(png_ptr)))
+		return;
+
+	png_init_io(png_ptr, fp);
+
+	png_set_compression_level(png_ptr, Z_BEST_COMPRESSION);
+	png_set_IHDR(png_ptr, info_ptr, efb_width, efb_height, 8,
+				PNG_COLOR_TYPE_RGB_ALPHA, PNG_INTERLACE_NONE,
+				PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+
+	png_write_info(png_ptr, info_ptr);
+
+	// NOTE: We use the *full* EFB_WIDTH here, not the fifolog's current efb_width
+	for (u32 i = 0; i < efb_height; ++i)
+		row_pointers[i] = (png_bytep) (screenshot_buffer + i * EFB_WIDTH);
+
+	png_set_swap_alpha(png_ptr);
+
+	png_write_image(png_ptr, row_pointers);
+	png_write_end(png_ptr, info_ptr);
+	png_destroy_write_struct(&png_ptr, (png_infopp)NULL);
+	free(row_pointers);
+	fclose(fp);
 }
