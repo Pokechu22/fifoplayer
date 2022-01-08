@@ -548,7 +548,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			{
 				for (u32 x = 0; x < cur_analyzed_frame.efb_width; x++)
 				{
-					GX_PeekARGB(x, y, &color);
+					GX_PeekARGB(x + cur_analyzed_frame.efb_left, y + cur_analyzed_frame.efb_top, &color);
 					u32 val = ((u32) color.a) << 24;
 					val |= ((u32) color.r) << 16;
 					val |= ((u32) color.g) << 8;

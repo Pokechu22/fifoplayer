@@ -195,6 +195,8 @@ struct AnalyzedObject
 struct AnalyzedFrameInfo
 {
 	std::vector<AnalyzedObject> objects;
+	u32 efb_left = 0;
+	u32 efb_top = 0;
 	u32 efb_width = 0;
 	u32 efb_height = 0;
 
@@ -238,7 +240,7 @@ public:
 			{
 				bool was_drawing = m_drawingObject;
 				bool unused;
-				u32 cmd_size = DecodeCommandLegacy(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem, dst_frame.efb_width, dst_frame.efb_height);
+				u32 cmd_size = DecodeCommandLegacy(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem, dst_frame.efb_left, dst_frame.efb_top, dst_frame.efb_width, dst_frame.efb_height);
 
 				// TODO: Check that cmd_size != 0
 
@@ -299,8 +301,8 @@ public:
 			{
 				bool was_drawing = is_drawing;
 				bool is_nontrivial_command = false;
-				u32 efb_width = 0, efb_height = 0;  // ignored
-				u32 cmd_size = DecodeCommandLegacy(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem, efb_width, efb_height);
+				u32 efb_left = 0, efb_top = 0, efb_width = 0, efb_height = 0;  // ignored
+				u32 cmd_size = DecodeCommandLegacy(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem, efb_left, efb_top, efb_width, efb_height);
 
 				// Found a nontrivial command
 				// Before writing it, flush all state changes in the optimized
@@ -497,7 +499,7 @@ public:
 		return data - data_start;
 	}
 
-	static u32 DecodeCommandLegacy(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem, u32& efb_width, u32& efb_height)
+	static u32 DecodeCommandLegacy(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem, u32& efb_left, u32& efb_top, u32& efb_width, u32& efb_height)
 	{
 		u8* data_start = data;
 
@@ -559,6 +561,16 @@ public:
 
 				//FifoAnalyzer::LoadBPReg(bp, m_BpMem);
 				// TODO: Load BP reg..
+
+				if (regid == BPMEM_EFB_TL)
+				{
+					// Record the current EFB size - this may happen multiple times,
+					// but since we create a new frame on an XFB copy, the last
+					// value that is set will be the size for the XFB copy.
+					X10Y10 tl{.hex = cmd2};
+					efb_left = tl.x;
+					efb_top = tl.y;
+				}
 
 				if (regid == BPMEM_EFB_WH)
 				{
