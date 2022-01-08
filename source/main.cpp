@@ -15,6 +15,7 @@
 #include <fat.h>
 #include <dirent.h>
 #include <network.h>
+#include <cmath>
 
 #include <png.h>
 #include <zlib.h>
@@ -728,8 +729,8 @@ void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
 	char filename[256];
 	if (view_scale != 1.0f)
 	{
-		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d_scale%f.png",
-		         screenshot_dir, screenshot_number, x_offset, y_offset, view_scale);
+		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d_scale%d.png",
+		         screenshot_dir, screenshot_number, x_offset, y_offset, (int)log2(view_scale));
 	}
 	else
 	{
