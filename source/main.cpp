@@ -677,9 +677,9 @@ int main()
 			f32 old_view_scale = view_scale;
 			s32 old_x_offset = x_offset;
 			s32 old_y_offset = y_offset;
-			view_scale = 1.0f;
-			for (int y = -1; y <= 1; y++) {
-				for (int x = -3; x <= 3; x++) {
+			view_scale = 4.0f;
+			for (int y = -2; y <= 2; y++) {
+				for (int x = -2; x <= 2; x++) {
 					x_offset = x;
 					y_offset = y;
 					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
@@ -687,15 +687,7 @@ int main()
 				}
 			}
 			// To combine images, use ImageMagick - see https://superuser.com/a/290679
-			// Unfortunately 1_x{-3..3}_y{-1..1}.png doesn't work (it expands to 1_x-3_y-1 1_x-3_y0 1_x-3_y1, which is the wrong order), so we do multiple temporary images instead
-			// N=1
-			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y-1.png ${N}_y-1.png
-			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y0.png ${N}_y0.png
-			// montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y1.png ${N}_y1.png
-			// montage -mode concatenate -tile 1x3 ${N}_y{-1..1}.png ../${N}.png
-			// rm ${N}_y{-1..1}.png
-			// In 1 line:
-			// N=1; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y-1.png ${N}_y-1.png; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y0.png ${N}_y0.png; montage -mode concatenate -tile 7x1 ${N}_x{-3..3}_y1.png ${N}_y1.png; montage -mode concatenate -tile 1x3 ${N}_y{-1..1}.png ../${N}.png; rm ${N}_y{-1..1}.png
+			// montage -mode concatenate -tile 5x5 1_y{-2..2}_x{-2..2}_scale2.png 1.png
 			view_scale = old_view_scale;
 			x_offset = old_x_offset;
 			y_offset = old_y_offset;
@@ -729,13 +721,14 @@ void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
 	char filename[256];
 	if (view_scale != 1.0f)
 	{
-		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d_scale%d.png",
-		         screenshot_dir, screenshot_number, x_offset, y_offset, (int)log2(view_scale));
+		// Order of y then x matters for combining images
+		snprintf(filename, sizeof(filename), "%s/%d_y%d_x%d_scale%d.png",
+		         screenshot_dir, screenshot_number, y_offset, x_offset, (int)log2(view_scale));
 	}
 	else
 	{
-		snprintf(filename, sizeof(filename), "%s/%d_x%d_y%d.png",
-		         screenshot_dir, screenshot_number, x_offset, y_offset);
+		snprintf(filename, sizeof(filename), "%s/%d_y%d_x%d.png",
+		         screenshot_dir, screenshot_number, y_offset, x_offset);
 	}
 
 	png_bytep *row_pointers = (png_bytep *) malloc(efb_height * sizeof(png_bytep));
