@@ -9,6 +9,8 @@
 
 #include "memory_manager.h"
 
+// #define ZERO_BUFFER
+
 static std::map<u32, aligned_buf> memory_map; // map of memory chunks (indexed by starting address)
 
 
@@ -32,6 +34,9 @@ aligned_buf::aligned_buf(const aligned_buf& oth)
 	if (oth.buf)
 	{
 		buf = (u8*)memalign(oth.alignment, oth.size);
+#ifdef ZERO_BUFFER
+		memset(buf, 0, oth.size);
+#endif
 		printf("copied to %p (%x) \n", buf, MEM_VIRTUAL_TO_PHYSICAL(buf));
 		memcpy(buf, oth.buf, oth.size);
 	}
@@ -45,6 +50,9 @@ void aligned_buf::resize(int new_size)
 	if (!buf)
 	{
 		buf = (u8*)memalign(alignment, new_size);
+#ifdef ZERO_BUFFER
+		memset(buf, 0, new_size);
+#endif
 		printf("allocated to %p (%x) - size %x \n", buf, MEM_VIRTUAL_TO_PHYSICAL(buf), new_size);
 
 	}
@@ -52,6 +60,9 @@ void aligned_buf::resize(int new_size)
 	{
 		u8* old_buf = buf;
 		buf = (u8*)memalign(alignment, new_size);
+#ifdef ZERO_BUFFER
+		memset(buf, 0, new_size);
+#endif
 		memcpy(buf, old_buf, std::min(new_size, size));
 		printf("reallocated to %p (%x)\n", buf, MEM_VIRTUAL_TO_PHYSICAL(buf));
 		free(old_buf);
