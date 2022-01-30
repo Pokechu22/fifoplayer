@@ -73,14 +73,8 @@ void aligned_buf::resize(int new_size)
 
 bool IntersectsMemoryRange(u32 start1, u32 size1, u32 start2, u32 size2)
 {
-	// Note: we treat ranges as intersecting if one ends a byte before the other starts
-	// This is needed since indexed XF loads need contiguous memory, but loads don't get
-	// recorded that way (instead only the loaded region is marked)
-	// Even merging like this isn't quite right, as if one of the indices isn't used,
-	// there will still be a gap and the actual addresses used probably won't match.
-	// But this does result in a significant improvement.
-	return size1 && size2 && ((start1 >= start2 && start1 <= start2 + size2) ||
-			(start2 >= start1 && start2 <= start1 + size1));
+	return size1 && size2 && ((start1 >= start2 && start1 < start2 + size2) ||
+			(start2 >= start1 && start2 < start1 + size1));
 }
 
 u32 FixupMemoryAddress(u32 addr)
