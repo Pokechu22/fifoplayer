@@ -456,8 +456,12 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			else if (cmd_data[0] == GX_LOAD_CP_REG)
 			{
 				u8 cmd2 = cmd_data[1];
-				u32 value = *(u32*)&cmd_data[2]; // TODO: Endiannes (only works on Wii)
-				if ((cmd2 & 0xF0) == 0xA0) // TODO: readability!
+				u32 value = *(u32*)&cmd_data[2]; // TODO: Endianness (only works on Wii)
+
+				// Note: we store the raw address, not the translated one
+				cpmem.LoadReg(cmd2, value);
+
+				if ((cmd2 & 0xF0) == 0xA0) // ARRAY_BASE - TODO: readability!
 					value = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(value));
 
 #if ENABLE_CONSOLE!=1
@@ -465,8 +469,6 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 				wgPipe->U8 = cmd_data[1];
 				wgPipe->U32 = value;
 #endif
-
-				cpmem.LoadReg(cmd2, value);
 			}
 			else if (cmd_data[0] == GX_LOAD_XF_REG)
 			{
@@ -502,11 +504,47 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 					cmd_data[0] == GX_LOAD_INDX_D)
 			{
 #if ENABLE_CONSOLE!=1
+				// Map the command byte to its ref array.
+				// GX_LOAD_INDX_A (32 = 8*4) . CPArray::XF_A (4+8 = 12)
+				// GX_LOAD_INDX_B (40 = 8*5) . CPArray::XF_B (5+8 = 13)
+				// GX_LOAD_INDX_C (48 = 8*6) . CPArray::XF_C (6+8 = 14)
+				// GX_LOAD_INDX_D (56 = 8*7) . CPArray::XF_D (7+8 = 15)
+				const u8 ref_array = (cmd_data[0] / 8) + 8;
+				// Map the array to the proper CP array
+				const u32 array_base = cpmem.arrayBases[ref_array];
+				const u32 stride = cpmem.arrayStrides[ref_array];
+
+				const u32 value = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
+				const u32 index = value >> 16;
+				const u32 offset = index * stride;
+
+				// Since we can't guarantee that CP arrays are contiguous
+				// (the fifo recorder doesn't record the whole array here,
+				// though it does for vertex attributes), we need to move the
+				// array base so that it matches the expected location.
+				// e.g. if array A was at address 0x8000 with stride 0x10,
+				// we might remap 0x8000 to 0xC000 for index 0, but index 2
+				// would originally be at 0x8020 but we might map it at 0xD000.
+				// The normal CP array remapping would result in looking at
+				// 0xC020, so we instead temporarily set the array location to
+				// 0xCFD0 so that adding 0x20 results in 0xD000.
+				const u32 load_address = array_base + offset;
+				const u32 translated_load_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(load_address));
+				const u32 translated_array_base = translated_load_addr - offset;
+
+				// Load the modified array
+				wgPipe->U8 = GX_LOAD_CP_REG;
+				wgPipe->U8 = 0xa0 | ref_array;  // ARRAY_BASE | ref_array
+				wgPipe->U32 = translated_array_base;
+
+				// Send the indexed load command
 				wgPipe->U8 = cmd_data[0];
-				wgPipe->U8 = cmd_data[1];
-				wgPipe->U8 = cmd_data[2];
-				wgPipe->U8 = cmd_data[3];
-				wgPipe->U8 = cmd_data[4];
+				wgPipe->U32 = value;
+
+				// Restore the original array
+				wgPipe->U8 = GX_LOAD_CP_REG;
+				wgPipe->U8 = 0xa0 | ref_array;  // ARRAY_BASE | ref_array
+				wgPipe->U32 = array_base;
 #endif
 			}
 			else if (cmd_data[0] & 0x80)
