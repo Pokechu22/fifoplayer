@@ -171,5 +171,16 @@ u8* GetPointer(u32 addr)
 		if (addr >= it->first && addr < it->first + it->second.size)
 			return &it->second.buf[addr - it->first];
 
+	if (addr != 0) {
+		// Translating a null pointer to 0 is fine; presumably the game won't use it
+		// (or it's using the actual data at 0 (the gameid and such) as a texture,
+		// but in that case there should have been a memory update for that, and
+		// the lookup won't fail here)
+		// This case still might be hit if a game sets a texture, doesn't draw
+		// anything with it, and then sets a new texture; if the texture is never used,
+		// its content isn't recorded into the dff file (I think), so no memory update
+		// exists to be translated.
+		printf("Failed to find pointer for addr %x\n", addr);
+	}
 	return NULL;
 }
