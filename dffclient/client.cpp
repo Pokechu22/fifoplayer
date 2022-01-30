@@ -19,6 +19,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <functional>
+#include <cstdlib>
 #include "../source/protocol.h"
 #include "../source/BPMemory.h"
 #include "../source/FifoDataFile.h"
@@ -573,6 +574,17 @@ void DffView::EnableIndexRecursively(const QModelIndex& index, bool enable, bool
 	}
 }
 
+static const char* GetTargetAddress()
+{
+	char* wiiload_env = std::getenv("WIILOAD");
+	if (wiiload_env != NULL)
+	{
+		if (wiiload_env[0] == 't' && wiiload_env[1] == 'c' && wiiload_env[2] == 'p' && wiiload_env[3] == ':')
+			return &wiiload_env[4];
+	}
+	return "127.0.0.1";
+}
+
 ServerWidget::ServerWidget() : QWidget()
 {
 	// dumb testing code for the bitfield class
@@ -596,7 +608,7 @@ ServerWidget::ServerWidget() : QWidget()
 
 	client = new DffClient(this);
 
-	hostname = new QLineEdit("127.0.0.1");
+	hostname = new QLineEdit(GetTargetAddress());
 	QPushButton* try_connect = new QPushButton(tr("Connect"));
 
 	connect(try_connect, SIGNAL(clicked()), this, SLOT(OnTryConnect()));
