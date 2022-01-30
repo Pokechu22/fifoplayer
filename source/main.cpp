@@ -302,20 +302,20 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 	}
 
 
-	u32 last_pos = 0;
-	for (std::vector<AnalyzedObject>::const_iterator cur_object = cur_analyzed_frame.objects.begin();
-		cur_object != cur_analyzed_frame.objects.end(); ++cur_object)
+	u32 update = 0;
+	for (auto& cur_object : cur_analyzed_frame.objects)
 	{
-		for (std::vector<u32>::const_iterator cur_command = cur_object->cmd_starts.begin();
-			cur_command != cur_object->cmd_starts.end(); ++cur_command)
+		u32 num_cmds = cur_object.cmd_starts.size();
+		for (u32 cmd_index = 0; cmd_index < num_cmds; cmd_index++)
 		{
-			const int cmd_index = cur_command-cur_object->cmd_starts.begin();
-			const u8* cmd_data = &cur_frame_data.fifoData[*cur_command];
+			const u32 cur_command = cur_object.cmd_starts[cmd_index];
+			const u32 cur_command_end = (cmd_index + 1 < num_cmds) ? cur_object.cmd_starts[cmd_index + 1] : cur_object.end;
+			const u8* cmd_data = &cur_frame_data.fifoData[cur_command];
 
 			const FifoFrameData &frame = fifo_data.frames[cur_frame];
-			for (unsigned int update = 0; update < frame.memoryUpdates.size(); ++update)
+			while (update < frame.memoryUpdates.size())
 			{
-				if ((!last_pos || frame.memoryUpdates[update].fifoPosition > last_pos) && frame.memoryUpdates[update].fifoPosition <= *cur_command)
+				if (frame.memoryUpdates[update].fifoPosition <= cur_command)
 				{
 //					PrepareMemoryLoad(frame.memoryUpdates[update].address, frame.memoryUpdates[update].dataSize);
 					fseek(fifo_data.file, frame.memoryUpdates[update].dataOffset, SEEK_SET);
@@ -324,11 +324,15 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 					// DCFlushRange expects aligned addresses
 					u32 off = frame.memoryUpdates[update].address % DEF_ALIGN;
 					DCFlushRange(GetPointer(frame.memoryUpdates[update].address - off), frame.memoryUpdates[update].dataSize+off);
+					update++;
+				}
+				else
+				{
+					break;
 				}
 			}
-			last_pos = *cur_command;
 
-			if (!cur_object->cmd_enabled[cmd_index])
+			if (!cur_object.cmd_enabled[cmd_index])
 				continue;
 
 			if (cmd_data[0] == GX_LOAD_BP_REG)
@@ -521,10 +525,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			}
 			else
 			{
-				u32 size = cur_object->last_cmd_byte - *cur_command + 1;
-				if (cur_command+1 != cur_object->cmd_starts.end() && size > *(cur_command+1)-*cur_command)
-					size = *(cur_command+1)-*cur_command;
-
+				u32 size = cur_command_end - cur_command;
 #if ENABLE_CONSOLE!=1
 				for (u32 addr = 0; addr < size; ++addr) {
 					// TODO: Push u32s instead
