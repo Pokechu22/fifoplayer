@@ -309,7 +309,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 		for (u32 cmd_index = 0; cmd_index < num_cmds; cmd_index++)
 		{
 			const u32 cur_command = cur_object.cmd_starts[cmd_index];
-			const u32 cur_command_end = (cmd_index + 1 < num_cmds) ? cur_object.cmd_starts[cmd_index + 1] : cur_object.end;
+			const u32 cur_command_end = (cmd_index + 1 < num_cmds) ? cur_object.cmd_starts[cmd_index + 1] : cur_object.last_cmd_byte + 1;
 			const u8* cmd_data = &cur_frame_data.fifoData[cur_command];
 
 			const FifoFrameData &frame = fifo_data.frames[cur_frame];
