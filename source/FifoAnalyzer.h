@@ -240,7 +240,7 @@ public:
 			{
 				bool was_drawing = m_drawingObject;
 				bool unused;
-				u32 cmd_size = DecodeCommandLegacy(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem, dst_frame.efb_left, dst_frame.efb_top, dst_frame.efb_width, dst_frame.efb_height);
+				u32 cmd_size = DecodeCommand(&src_frame.fifoData[cmd_start], m_drawingObject, unused, m_cpmem, dst_frame.efb_left, dst_frame.efb_top, dst_frame.efb_width, dst_frame.efb_height);
 
 				// TODO: Check that cmd_size != 0
 
@@ -287,7 +287,6 @@ public:
 
 		CPMemory old_cpmem = cpmem;
 
-		bool is_drawing = false;
 		for (auto frame : data.frames)
 		{
 			FifoFrameData optimized_frame;
@@ -299,10 +298,10 @@ public:
 			u32 old_start = cmd_start;
 			while (cmd_start < frame.fifoData.size())
 			{
-				bool was_drawing = is_drawing;
+				bool is_drawing = false;
 				bool is_nontrivial_command = false;
 				u32 efb_left = 0, efb_top = 0, efb_width = 0, efb_height = 0;  // ignored
-				u32 cmd_size = DecodeCommandLegacy(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem, efb_left, efb_top, efb_width, efb_height);
+				u32 cmd_size = DecodeCommand(&frame.fifoData[cmd_start], is_drawing, is_nontrivial_command, cpmem, efb_left, efb_top, efb_width, efb_height);
 
 				// Found a nontrivial command
 				// Before writing it, flush all state changes in the optimized
@@ -402,104 +401,7 @@ public:
 	// Returns amount of bytes read
 	// drawing_object will be "true" if the command was a drawing command, otherwise "false".
 	// nontrivial_command will be set to true if the command triggers events other than plain configuration changes.
-	static u32 DecodeCommand(u8* data, bool& drawing_object, bool &nontrivial_command, const CPMemory& cpmem)
-	{
-		u8* data_start = data;
-
-		u8 cmd = ReadFifo8(data);
-
-		nontrivial_command = false;
-
-		switch (cmd)
-		{
-			case GX_NOP:
-			case 0x44:
-			case GX_CMD_INVL_VC:
-				break;
-
-			case GX_LOAD_CP_REG:
-			{
-				drawing_object = false;
-
-				u32 cmd2 = ReadFifo8(data);
-				u32 value = ReadFifo32(data);
-				break;
-			}
-
-			case GX_LOAD_XF_REG:
-			{
-				drawing_object = false;
-
-				u32 cmd2 = ReadFifo32(data);
-				u8 stream_size = ((cmd2 >> 16) & 0xf) + 1; // TODO: Check if this works!
-
-				data += stream_size * 4;
-				break;
-			}
-
-			case GX_LOAD_INDX_A:
-			case GX_LOAD_INDX_B:
-			case GX_LOAD_INDX_C:
-			case GX_LOAD_INDX_D:
-				drawing_object = false;
-				data += 4;
-				break;
-
-			case GX_CMD_CALL_DL:
-				// The recorder should have expanded display lists into the fifo stream and skipped the call to start them
-				// That is done to make it easier to track where memory is updated
-				//_assert_(false);
-				printf("Shouldn't have a DL here...\n");
-				data += 8;
-				break;
-
-			case GX_LOAD_BP_REG:
-			{
-				drawing_object = false;
-
-				u32 cmd2 = ReadFifo32(data);
-				u8 regid = cmd2>>24;
-
-				// TODO: Might want to do some stuff here...
-
-				if ((regid == BPMEM_TRIGGER_EFB_COPY
-					|| regid == BPMEM_CLEARBBOX1
-					|| regid == BPMEM_CLEARBBOX2
-					|| regid == BPMEM_SETDRAWDONE
-					|| regid == BPMEM_PE_TOKEN_ID // TODO: Sure that we want to skip this one?
-					|| regid == BPMEM_PE_TOKEN_INT_ID
-					|| regid == BPMEM_LOADTLUT0
-					|| regid == BPMEM_LOADTLUT1
-					|| regid == BPMEM_TEXINVALIDATE
-					|| regid == BPMEM_PRELOAD_MODE
-					|| regid == BPMEM_CLEAR_PIXEL_PERF))
-					nontrivial_command = true;
-				
-				break;
-			}
-
-			default:
-				if (cmd & 0x80)
-				{
-					nontrivial_command = true;
-					drawing_object = true;
-					u32 vtxAttrGroup = cmd & GX_VAT_MASK;
-					int vertex_size = CalculateVertexSize(vtxAttrGroup, cpmem);
-
-					u16 stream_size = ReadFifo16(data);
-					data += stream_size * vertex_size;
-				}
-				else
-				{
-					printf("Invalid fifo command 0x%x\n", cmd);
-//					sleep(1);
-				}
-				break;
-		}
-		return data - data_start;
-	}
-
-	static u32 DecodeCommandLegacy(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem, u32& efb_left, u32& efb_top, u32& efb_width, u32& efb_height)
+	static u32 DecodeCommand(u8* data, bool& drawing_object, bool& nontrivial_command, CPMemory& cpmem, u32& efb_left, u32& efb_top, u32& efb_width, u32& efb_height)
 	{
 		u8* data_start = data;
 
