@@ -47,8 +47,23 @@ s32 y_offset = 0;
 
 static vu16* const _viReg = (u16*)0xCC002000;
 using namespace VideoInterface;
+
+u32 TransformCPReg(u8 reg, u32 data, CPMemory& target_cpmem);
+u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data);
+
 void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& target_cpmem)
 {
+	for (const FifoFrameData& frame : fifo_data.frames)
+	{
+		for (const DffMemoryUpdate& update : frame.memoryUpdates)
+		{
+			PrepareMemoryLoad(update.address, update.dataSize);
+			//if (early_mem_updates)
+			//	memcpy(GetPointer(update.address), &update.data[0], update.data.size());
+			//DCFlushRange(GetPointer(update.address), update.dataSize);
+		}
+	}
+
 	const std::vector<u32>& bpmem = fifo_data.bpmem;
 	const std::vector<u32>& cpmem = fifo_data.cpmem;
 	const std::vector<u32>& xfmem = fifo_data.xfmem;
@@ -70,31 +85,12 @@ void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& targe
 			|| i == BPMEM_CLEAR_PIXEL_PERF))
 			continue;
 
-		u32 new_value = bpmem[i];
-
-		// Patch texture addresses
-		if ((i >= BPMEM_TX_SETIMAGE3 && i < BPMEM_TX_SETIMAGE3+4) ||
-			(i >= BPMEM_TX_SETIMAGE3_4 && i < BPMEM_TX_SETIMAGE3_4+4))
-		{
-			u32 tempval = le32toh(new_value);
-			TexImage3* img = (TexImage3*)&tempval;
-			u32 addr = img->image_base << 5;
-			u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-			img->image_base = new_addr >> 5;
-			new_value = h32tole(tempval);
-
-			if (tex_addr)
-			{
-				if (i >= BPMEM_TX_SETIMAGE3 && i < BPMEM_TX_SETIMAGE3+4)
-					tex_addr[i - BPMEM_TX_SETIMAGE3] = new_addr;
-				else
-					tex_addr[4 + i - BPMEM_TX_SETIMAGE3_4] = new_addr;
-			}
-		}
+		const u32 old_value = le32toh(bpmem[i]) & 0xffffff;
+		const u32 new_value = TransformBPReg(i, old_value, fifo_data);
 
 #if ENABLE_CONSOLE!=1
-		wgPipe->U8 = 0x61;
-		wgPipe->U32 = (i<<24)|(le32toh(new_value)&0xffffff);
+		wgPipe->U8 = GX_LOAD_BP_REG;
+		wgPipe->U32 = (i<<24)|(new_value&0xffffff);
 #endif
 	}
 
@@ -149,33 +145,35 @@ void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& targe
 	}
 
 #if ENABLE_CONSOLE!=1
-	#define MLoadCPReg(addr, val) { wgPipe->U8 = 0x08; wgPipe->U8 = addr; wgPipe->U32 = val; target_cpmem.LoadReg(addr, le32toh(cpmem[addr])); }
+	auto load_cp_reg = [&](u8 reg) {
+		const u32 old_value = le32toh(cpmem[reg]);
+		const u32 new_value = TransformCPReg(reg, old_value, target_cpmem);
+		wgPipe->U8 = GX_LOAD_CP_REG;
+		wgPipe->U8 = reg;
+		wgPipe->U32 = new_value;
+	};
 
-	MLoadCPReg(0x30, le32toh(cpmem[0x30]));
-	MLoadCPReg(0x40, le32toh(cpmem[0x40]));
-	MLoadCPReg(0x50, le32toh(cpmem[0x50]));
-	MLoadCPReg(0x60, le32toh(cpmem[0x60]));
+	load_cp_reg(MATINDEX_A);
+	load_cp_reg(MATINDEX_B);
+	load_cp_reg(VCD_LO);
+	load_cp_reg(VCD_HI);
 
-	for (int i = 0; i < 8; ++i)
+	for (u8 i = 0; i < 8; ++i)
 	{
-		MLoadCPReg(0x70 + i, le32toh(cpmem[0x70 + i]));
-		MLoadCPReg(0x80 + i, le32toh(cpmem[0x80 + i]));
-		MLoadCPReg(0x90 + i, le32toh(cpmem[0x90 + i]));
+		load_cp_reg(CP_VAT_REG_A + i);
+		load_cp_reg(CP_VAT_REG_B + i);
+		load_cp_reg(CP_VAT_REG_C + i);
 	}
 
-	for (int i = 0; i < 16; ++i)
+	for (u8 i = 0; i < 16; ++i)
 	{
-		// 0xA0 has the addresses of vertex arrays, which need to be relocated.
-		u32 addr = le32toh(cpmem[0xa0 + i]);
-		addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-		MLoadCPReg(0xa0 + i, addr);
-		MLoadCPReg(0xb0 + i, le32toh(cpmem[0xb0 + i]));
+		load_cp_reg(ARRAY_BASE + i);
+		load_cp_reg(ARRAY_STRIDE + i);
 	}
-	#undef MLoadCPReg
 
 	for (unsigned int i = 0; i < xfmem.size(); i += 16)
 	{
-		wgPipe->U8 = 0x10;
+		wgPipe->U8 = GX_LOAD_XF_REG;
 		wgPipe->U32 = 0xf0000 | (i&0xffff); // load 16*4 bytes at once
 		for (int k = 0; k < 16; ++k)
 		{
@@ -185,7 +183,7 @@ void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& targe
 
 	for (unsigned int i = 0; i < xfregs.size(); ++i)
 	{
-		wgPipe->U8 = 0x10;
+		wgPipe->U8 = GX_LOAD_XF_REG;
 		wgPipe->U32 = 0x1000 | (i&0x0fff);
 		u32 val = xfregs[i];
 		if (i == 5) val = 1;
@@ -252,7 +250,7 @@ void Init()
 	GX_Init(gp_fifo,DEFAULT_FIFO_SIZE);
 
 #if ENABLE_CONSOLE==1
-    console_init(frameBuffer[0],20,20,rmode->fbWidth,rmode->xfbHeight,rmode->fbWidth*VI_DISPLAY_PIX_SZ);
+	console_init(frameBuffer[0],20,20,rmode->fbWidth,rmode->xfbHeight,rmode->fbWidth*VI_DISPLAY_PIX_SZ);
 #endif
 
 	WPAD_Init();
@@ -279,28 +277,104 @@ bool CheckIfHomePressed()
 	return false;
 }
 
+u32 TransformCPReg(u8 reg, u32 data, CPMemory& target_cpmem)
+{
+	// Note: we store the raw address, not the translated one
+	target_cpmem.LoadReg(reg, data);
+
+	if ((reg & 0xF0) == ARRAY_BASE)
+		return MEM_VIRTUAL_TO_PHYSICAL(GetPointer(data));
+	else
+		return data;
+}
+
+// Data and return value should use only 24 bits
+u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data)
+{
+	// Patch texture addresses
+	if ((reg >= BPMEM_TX_SETIMAGE3   && reg < BPMEM_TX_SETIMAGE3 + 4) ||
+		(reg >= BPMEM_TX_SETIMAGE3_4 && reg < BPMEM_TX_SETIMAGE3_4+4))
+	{
+		const u32 addr = data << 5; // TODO: Proper mask?
+		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
+		const u32 new_value = new_addr >> 5;
+
+		if (reg >= BPMEM_TX_SETIMAGE3 && reg < BPMEM_TX_SETIMAGE3+4)
+			tex_addr[reg - BPMEM_TX_SETIMAGE3] = new_addr;
+		else
+			tex_addr[4 + reg - BPMEM_TX_SETIMAGE3_4] = new_addr;
+
+		return new_value;
+	}
+	else if (reg == BPMEM_PRELOAD_ADDR)
+	{
+		// TODO
+		return data;
+	}
+	else if (reg == BPMEM_LOADTLUT0)
+	{
+		// TODO: Untested
+		const u32 addr = data << 5; // TODO: Proper mask?
+		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
+		const u32 new_value = new_addr >> 5;
+		return new_value;
+	}
+	// TODO: Check for BPMEM_PRELOAD_MODE
+	else if (reg == BPMEM_EFB_ADDR)
+	{
+		const u32 addr = data << 5; // TODO
+		efbcopy_target = addr;
+		return data;
+	}
+	else if (reg == BPMEM_TRIGGER_EFB_COPY)
+	{
+		UPE_Copy* copy = (UPE_Copy*)&data;
+
+		// Version 1 did not support EFB->XFB copies
+		if (fifo_data.version >= 2 || !copy->copy_to_xfb)
+		{
+			bool update_textures = PrepareMemoryLoad(efbcopy_target, 640*480*4); // TODO: Size!!
+			u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(efbcopy_target));
+			u32 new_value = /*h32tobe*/((BPMEM_EFB_ADDR<<24) | (new_addr >> 5));
+
+			// TODO: this code is generally dubious
+#if ENABLE_CONSOLE!=1
+			// Update target address
+			wgPipe->U8 = 0x61;
+			wgPipe->U32 = (BPMEM_EFB_ADDR<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+
+			// Gotta fix texture offsets if memory map layout changed
+			if (update_textures)
+			{
+				for (int k = 0; k < 8; ++k)
+				{
+					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(tex_addr[k]));
+					u32 new_value = /*h32tobe*/(new_addr>>5);
+
+#if ENABLE_CONSOLE!=1
+					wgPipe->U8 = 0x61;
+					u32 reg = (k < 4) ? (BPMEM_TX_SETIMAGE3+k) : (BPMEM_TX_SETIMAGE3_4+(k-4));
+					wgPipe->U32 = (reg<<24)|(/*be32toh*/(new_value)&0xffffff);
+#endif
+				}
+			}
+		}
+		return data;
+	}
+	return data;
+}
+
 void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem, bool screenshot) {
 	const FifoFrameData& cur_frame_data = fifo_data.frames[cur_frame];
 	const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
 	if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
 	{
-		for (unsigned int frameNum = 0; frameNum < fifo_data.frames.size(); ++frameNum)
-		{
-			const FifoFrameData &frame = fifo_data.frames[frameNum];
-			for (unsigned int i = 0; i < frame.memoryUpdates.size(); ++i)
-			{
-				PrepareMemoryLoad(frame.memoryUpdates[i].address, frame.memoryUpdates[i].dataSize);
-				//if (early_mem_updates)
-				//	memcpy(GetPointer(frame.memoryUpdates[i].address), &frame.memoryUpdates[i].data[0], frame.memoryUpdates[i].data.size());
-				//DCFlushRange(GetPointer(frame.memoryUpdates[i].address), frame.memoryUpdates[i].dataSize);
-			}
-		}
-
 		ApplyInitialState(fifo_data, tex_addr, cpmem);
 	}
 
 
-	u32 update = 0;
+	u32 update_num = 0;
 	for (auto& cur_object : cur_analyzed_frame.objects)
 	{
 		u32 num_cmds = cur_object.cmd_starts.size();
@@ -311,18 +385,19 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			const u8* cmd_data = &cur_frame_data.fifoData[cur_command];
 
 			const FifoFrameData &frame = fifo_data.frames[cur_frame];
-			while (update < frame.memoryUpdates.size())
+			while (update_num < frame.memoryUpdates.size())
 			{
-				if (frame.memoryUpdates[update].fifoPosition <= cur_command)
+				const DffMemoryUpdate& update = frame.memoryUpdates[update_num];
+				if (update.fifoPosition <= cur_command)
 				{
-//					PrepareMemoryLoad(frame.memoryUpdates[update].address, frame.memoryUpdates[update].dataSize);
-					fseek(fifo_data.file, frame.memoryUpdates[update].dataOffset, SEEK_SET);
-					fread(GetPointer(frame.memoryUpdates[update].address), frame.memoryUpdates[update].dataSize, 1, fifo_data.file);
+//					PrepareMemoryLoad(update.address, update.dataSize);
+					fseek(fifo_data.file, update.dataOffset, SEEK_SET);
+					fread(GetPointer(update.address), update.dataSize, 1, fifo_data.file);
 
 					// DCFlushRange expects aligned addresses
-					u32 off = frame.memoryUpdates[update].address % DEF_ALIGN;
-					DCFlushRange(GetPointer(frame.memoryUpdates[update].address - off), frame.memoryUpdates[update].dataSize+off);
-					update++;
+					u32 off = update.address % DEF_ALIGN;
+					DCFlushRange(GetPointer(update.address) - off, update.dataSize + off);
+					update_num++;
 				}
 				else
 				{
@@ -335,137 +410,26 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 
 			if (cmd_data[0] == GX_LOAD_BP_REG)
 			{
-				// Patch texture addresses
-				if ((cmd_data[1] >= BPMEM_TX_SETIMAGE3 && cmd_data[1] < BPMEM_TX_SETIMAGE3+4) ||
-					(cmd_data[1] >= BPMEM_TX_SETIMAGE3_4 && cmd_data[1] < BPMEM_TX_SETIMAGE3_4+4))
-				{
-					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-					TexImage3* img = (TexImage3*)&tempval;
-					u32 addr = img->image_base << 5; // TODO: Proper mask?
-					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-					img->image_base = new_addr >> 5;
-					u32 new_value = /*h32tobe*/(tempval);
-
+				const u32 value = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
+				const u8 cmd2 = (value >> 24);
+				const u32 data = value & 0xffffff;
+				const u32 new_data = TransformBPReg(cmd2, data, fifo_data);
+				const u32 new_value = (cmd2 << 24) | (new_data & 0xffffff);
 #if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					wgPipe->U32 = ((u32)cmd_data[1]<<24)|(/*be32toh*/(new_value)&0xffffff);
+				wgPipe->U8 = GX_LOAD_BP_REG;
+				wgPipe->U32 = new_value;
 #endif
-
-					if (cmd_data[1] >= BPMEM_TX_SETIMAGE3 &&
-						cmd_data[1] < BPMEM_TX_SETIMAGE3+4)
-						tex_addr[cmd_data[1] - BPMEM_TX_SETIMAGE3] = new_addr;
-					else
-						tex_addr[4 + cmd_data[1] - BPMEM_TX_SETIMAGE3_4] = new_addr;
-				}
-				else if (cmd_data[1] == BPMEM_PRELOAD_ADDR)
-				{
-					// TODO
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U8 = cmd_data[2];
-					wgPipe->U8 = cmd_data[3];
-					wgPipe->U8 = cmd_data[4];
-#endif
-				}
-				else if (cmd_data[1] == BPMEM_LOADTLUT0)
-				{
-#if 1
-					// TODO: Untested
-					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-					u32 addr = tempval << 5; // TODO: Proper mask?
-					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-					u32 new_value = new_addr >> 5;
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = cmd_data[0];
-					wgPipe->U32 = (BPMEM_LOADTLUT0<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-#endif
-				}
-				// TODO: Check for BPMEM_PRELOAD_MODE
-				else if (cmd_data[1] == BPMEM_EFB_ADDR)
-				{
-					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-					u32 addr = (tempval & 0xFFFFFF) << 5; // TODO
-					efbcopy_target = addr;
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U8 = cmd_data[2];
-					wgPipe->U8 = cmd_data[3];
-					wgPipe->U8 = cmd_data[4];
-#endif
-				}
-				else if (cmd_data[1] == BPMEM_TRIGGER_EFB_COPY)
-				{
-					u32 tempval = /*be32toh*/(*(u32*)&cmd_data[1]);
-					UPE_Copy* copy = (UPE_Copy*)&tempval;
-
-					// Version 1 did not support EFB->XFB copies
-					if (fifo_data.version >= 2 || !copy->copy_to_xfb)
-					{
-						bool update_textures = PrepareMemoryLoad(efbcopy_target, 640*480*4); // TODO: Size!!
-						u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(efbcopy_target));
-						u32 new_value = /*h32tobe*/((BPMEM_EFB_ADDR<<24) | (new_addr >> 5));
-
-#if ENABLE_CONSOLE!=1
-						// Update target address
-						wgPipe->U8 = 0x61;
-						wgPipe->U32 = (BPMEM_EFB_ADDR<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-
-						// Gotta fix texture offsets if memory map layout changed
-						if (update_textures)
-						{
-							for (int k = 0; k < 8; ++k)
-							{
-								u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(tex_addr[k]));
-								u32 new_value = /*h32tobe*/(new_addr>>5);
-
-#if ENABLE_CONSOLE!=1
-								wgPipe->U8 = 0x61;
-								u32 reg = (k < 4) ? (BPMEM_TX_SETIMAGE3+k) : (BPMEM_TX_SETIMAGE3_4+(k-4));
-								wgPipe->U32 = (reg<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-							}
-						}
-					}
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U8 = cmd_data[2];
-					wgPipe->U8 = cmd_data[3];
-					wgPipe->U8 = cmd_data[4];
-#endif
-				}
-				else
-				{
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					wgPipe->U8 = cmd_data[1];
-					wgPipe->U8 = cmd_data[2];
-					wgPipe->U8 = cmd_data[3];
-					wgPipe->U8 = cmd_data[4];
-#endif
-				}
 			}
 			else if (cmd_data[0] == GX_LOAD_CP_REG)
 			{
-				u8 cmd2 = cmd_data[1];
-				u32 value = *(u32*)&cmd_data[2]; // TODO: Endianness (only works on Wii)
-
-				// Note: we store the raw address, not the translated one
-				cpmem.LoadReg(cmd2, value);
-
-				if ((cmd2 & 0xF0) == 0xA0) // ARRAY_BASE - TODO: readability!
-					value = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(value));
+				const u8 cmd2 = cmd_data[1];
+				const u32 value = *(u32*)&cmd_data[2]; // TODO: Endianness (only works on Wii)
+				const u32 new_value = TransformCPReg(cmd2, value, cpmem);
 
 #if ENABLE_CONSOLE!=1
 				wgPipe->U8 = GX_LOAD_CP_REG;
-				wgPipe->U8 = cmd_data[1];
-				wgPipe->U32 = value;
+				wgPipe->U8 = cmd2;
+				wgPipe->U32 = new_value;
 #endif
 			}
 			else if (cmd_data[0] == GX_LOAD_XF_REG)
@@ -532,7 +496,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 
 				// Load the modified array
 				wgPipe->U8 = GX_LOAD_CP_REG;
-				wgPipe->U8 = 0xa0 | ref_array;  // ARRAY_BASE | ref_array
+				wgPipe->U8 = ARRAY_BASE | ref_array;
 				wgPipe->U32 = translated_array_base;
 
 				// Send the indexed load command
@@ -541,7 +505,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 
 				// Restore the original array
 				wgPipe->U8 = GX_LOAD_CP_REG;
-				wgPipe->U8 = 0xa0 | ref_array;  // ARRAY_BASE | ref_array
+				wgPipe->U8 = ARRAY_BASE | ref_array;
 				wgPipe->U32 = array_base;
 #endif
 			}

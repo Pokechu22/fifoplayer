@@ -7,6 +7,45 @@
 
 //#include "Common.h"
 
+enum
+{
+	// These commands use the high nybble for the command itself, and the lower nybble is an argument.
+	// TODO: However, Dolphin's implementation (in LoadCPReg) and YAGCD disagree about what values are
+	// valid for the lower nybble.
+
+	// YAGCD mentions 0x20 as "?", and does not mention the others
+	// Libogc has 0x00 and 0x20, where 0x00 is tied to GX_ClearVCacheMetric and 0x20 related to
+	// cpPerfMode. 0x10 may be GX_SetVCacheMetric, but that function is empty. In any case, these all
+	// are probably for perf queries, and no title seems to actually need a full implementation.
+	UNKNOWN_00 = 0x00,
+	UNKNOWN_10 = 0x10,
+	UNKNOWN_20 = 0x20,
+	// YAGCD says 0x30 only; LoadCPReg allows any
+	MATINDEX_A = 0x30,
+	// YAGCD says 0x40 only; LoadCPReg allows any
+	MATINDEX_B = 0x40,
+	// YAGCD says 0x50-0x57 for distinct VCDs; LoadCPReg allows any for a single VCD
+	VCD_LO = 0x50,
+	// YAGCD says 0x60-0x67 for distinct VCDs; LoadCPReg allows any for a single VCD
+	VCD_HI = 0x60,
+	// YAGCD and LoadCPReg both agree that only 0x70-0x77 are valid
+	CP_VAT_REG_A = 0x70,
+	// YAGCD and LoadCPReg both agree that only 0x80-0x87 are valid
+	CP_VAT_REG_B = 0x80,
+	// YAGCD and LoadCPReg both agree that only 0x90-0x97 are valid
+	CP_VAT_REG_C = 0x90,
+	// YAGCD and LoadCPReg agree that 0xa0-0xaf are valid
+	ARRAY_BASE = 0xa0,
+	// YAGCD and LoadCPReg agree that 0xb0-0xbf are valid
+	ARRAY_STRIDE = 0xb0,
+
+	CP_COMMAND_MASK = 0xf0,
+	CP_NUM_VAT_REG = 0x08,
+	CP_VAT_MASK = 0x07,
+	CP_NUM_ARRAYS = 0x10,
+	CP_ARRAY_MASK = 0x0f,
+};
+
 // Vertex array numbers
 enum
 {
