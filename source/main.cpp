@@ -265,8 +265,6 @@ void Init()
 	net_init();
 }
 
-#include "mygx.h"
-
 bool CheckIfHomePressed()
 {
 /*	VIDEO_WaitVSync();
