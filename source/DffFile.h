@@ -115,8 +115,8 @@ struct DffAsyncEvent
 		VI_WRITE32 = 0x01,
 	};
 
-    u32 fifoPosition;
-    u8 type;
+	u32 fifoPosition;
+	u8 type;
 
 	union
 	{
