@@ -37,10 +37,6 @@ typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint8_t u8;
 
-static u32 efbcopy_target = 0;
-
-static u32 tex_addr[8] = {0};
-
 f32 view_scale = 1.0f;
 s32 x_offset = 0;
 s32 y_offset = 0;
@@ -51,7 +47,7 @@ using namespace VideoInterface;
 u32 TransformCPReg(u8 reg, u32 data, CPMemory& target_cpmem);
 u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data);
 
-void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& target_cpmem)
+void ApplyInitialState(const FifoData& fifo_data, CPMemory& target_cpmem, const std::vector<AnalyzedFrameInfo>& analyzed_frames)
 {
 	for (const FifoFrameData& frame : fifo_data.frames)
 	{
@@ -64,6 +60,30 @@ void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& targe
 		}
 	}
 
+	// Run through frames and find EFB copies, to prepare for their memory loads
+	for (u32 cur_frame = 0; cur_frame < fifo_data.frames.size(); cur_frame++)
+	{
+		const FifoFrameData& frame = fifo_data.frames[cur_frame];
+		const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
+		for (auto& cur_object : cur_analyzed_frame.objects)
+		{
+			for (const u32 cmd_start : cur_object.cmd_starts)
+			{
+				if (frame.fifoData[cmd_start] == GX_LOAD_BP_REG)
+				{
+					const u8 cmd2 = frame.fifoData[cmd_start + 1];
+					if (cmd2 == BPMEM_EFB_ADDR)
+					{
+						const u32 value = *(u32*)&frame.fifoData[cmd_start + 1] & 0x00ffffff;
+						const u32 addr = value << 5; // TODO
+						PrepareMemoryLoad(addr, EFB_WIDTH*EFB_HEIGHT*4);  // TODO: size
+					}
+				}
+			}
+		}
+	}
+
+	// Actually apply initial state
 	const std::vector<u32>& bpmem = fifo_data.bpmem;
 	const std::vector<u32>& cpmem = fifo_data.cpmem;
 	const std::vector<u32>& xfmem = fifo_data.xfmem;
@@ -131,7 +151,7 @@ void ApplyInitialState(const FifoData& fifo_data, u32* tex_addr, CPMemory& targe
 			_viReg[i+1] = new_value_lo;
 			_CPU_ISR_Restore(level);*/
 //			VIDEO_SetNextFramebuffer(GetPointer(new_addr));
-			VIDEO_SetNextFramebuffer(GetPointer(efbcopy_target)); // and there go our haxx..
+			//VIDEO_SetNextFramebuffer(GetPointer(efbcopy_target)); // and there go our haxx..
 #endif
 
 			++i;  // increase i by 2
@@ -298,12 +318,6 @@ u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data)
 		const u32 addr = data << 5; // TODO: Proper mask?
 		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
 		const u32 new_value = new_addr >> 5;
-
-		if (reg >= BPMEM_TX_SETIMAGE3 && reg < BPMEM_TX_SETIMAGE3+4)
-			tex_addr[reg - BPMEM_TX_SETIMAGE3] = new_addr;
-		else
-			tex_addr[4 + reg - BPMEM_TX_SETIMAGE3_4] = new_addr;
-
 		return new_value;
 	}
 	else if (reg == BPMEM_PRELOAD_ADDR)
@@ -323,46 +337,14 @@ u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data)
 	else if (reg == BPMEM_EFB_ADDR)
 	{
 		const u32 addr = data << 5; // TODO
-		efbcopy_target = addr;
-		return data;
+		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
+		const u32 new_value = new_addr >> 5;
+		return new_value;
 	}
-	else if (reg == BPMEM_TRIGGER_EFB_COPY)
+	else
 	{
-		UPE_Copy* copy = (UPE_Copy*)&data;
-
-		// Version 1 did not support EFB->XFB copies
-		if (fifo_data.version >= 2 || !copy->copy_to_xfb)
-		{
-			bool update_textures = PrepareMemoryLoad(efbcopy_target, 640*480*4); // TODO: Size!!
-			u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(efbcopy_target));
-			u32 new_value = /*h32tobe*/((BPMEM_EFB_ADDR<<24) | (new_addr >> 5));
-
-			// TODO: this code is generally dubious
-#if ENABLE_CONSOLE!=1
-			// Update target address
-			wgPipe->U8 = 0x61;
-			wgPipe->U32 = (BPMEM_EFB_ADDR<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-
-			// Gotta fix texture offsets if memory map layout changed
-			if (update_textures)
-			{
-				for (int k = 0; k < 8; ++k)
-				{
-					u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(tex_addr[k]));
-					u32 new_value = /*h32tobe*/(new_addr>>5);
-
-#if ENABLE_CONSOLE!=1
-					wgPipe->U8 = 0x61;
-					u32 reg = (k < 4) ? (BPMEM_TX_SETIMAGE3+k) : (BPMEM_TX_SETIMAGE3_4+(k-4));
-					wgPipe->U32 = (reg<<24)|(/*be32toh*/(new_value)&0xffffff);
-#endif
-				}
-			}
-		}
 		return data;
 	}
-	return data;
 }
 
 void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem, bool screenshot) {
@@ -370,9 +352,8 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 	const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
 	if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
 	{
-		ApplyInitialState(fifo_data, tex_addr, cpmem);
+		ApplyInitialState(fifo_data, cpmem, analyzed_frames);
 	}
-
 
 	u32 update_num = 0;
 	for (auto& cur_object : cur_analyzed_frame.objects)
