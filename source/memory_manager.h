@@ -35,3 +35,5 @@ bool PrepareMemoryLoad(u32 start_addr, u32 size);
 u8* GetPointer(u32 addr);
 
 void PrintMemoryMap();
+
+extern bool memory_manager_allow_wii_addrs;

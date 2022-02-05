@@ -19,6 +19,7 @@ void LoadDffData(const char* filename, FifoData& out)
 		printf ("file ID or version don't match!\n");
 	}
 	out.version = header.file_version;
+	out.wii = header.flags & DffFileHeader::FLAG_IS_WII;
 
 	printf ("Got %d frame%s\n", header.frameCount, (header.frameCount == 1) ? "" : "s");
 

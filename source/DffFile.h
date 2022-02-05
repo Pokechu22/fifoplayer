@@ -7,6 +7,11 @@
 #pragma pack(push, 4)
 
 union DffFileHeader {
+	enum
+	{
+		FLAG_IS_WII = 1
+	};
+
 	struct {
 		// Version 1 data
 		u32 fileId;

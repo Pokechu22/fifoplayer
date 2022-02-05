@@ -34,6 +34,8 @@ struct FifoData
 	std::vector<u32> xfmem;
 	std::vector<u32> xfregs;
 	std::vector<u16> vimem;
+
+	bool wii;
 };
 
 void LoadDffData(const char* filename, FifoData& out);

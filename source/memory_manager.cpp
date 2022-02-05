@@ -11,6 +11,7 @@
 
 // #define ZERO_BUFFER
 
+bool memory_manager_allow_wii_addrs = false;
 static std::map<u32, aligned_buf> memory_map; // map of memory chunks (indexed by starting address)
 
 
@@ -89,11 +90,19 @@ u32 FixupMemoryAddress(u32 addr)
 		case 0x1:
 		case 0x9:
 		case 0xd:
-			// TODO: Iff Wii
-			addr &= 0x03FFFFFF; // EXRAM_MASK
-			// Include the top bit that indicates that this is in MEM2
-			// (otherwise, MEM1 and MEM2 get mapped to the same place and clash with each other)
-			addr |= 0x10000000;
+			if (memory_manager_allow_wii_addrs)
+			{
+				addr &= 0x03FFFFFF; // EXRAM_MASK
+				// Include the top bit that indicates that this is in MEM2
+				// (otherwise, MEM1 and MEM2 get mapped to the same place and clash with each other)
+				addr |= 0x10000000;
+			}
+			else
+			{
+				// Several GameCube games still set this bit (e.g. Wario World, Mario Kart Double Dash, Mario Party 5)
+				// This has been seen with BPMEM_LOADTLUT1 at least
+				addr &= 0x01FFFFFF; // RAM_MASK
+			}
 			break;
 
 		default:

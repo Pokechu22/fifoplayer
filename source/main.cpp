@@ -600,6 +600,7 @@ int main()
 	FifoData fifo_data;
 	LoadDffData(DFF_FILENAME, fifo_data);
 	printf("Loaded dff data\n");
+	memory_manager_allow_wii_addrs = fifo_data.wii;
 
 	FifoDataAnalyzer analyzer;
 	std::vector<AnalyzedFrameInfo> analyzed_frames;
