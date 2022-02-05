@@ -313,30 +313,10 @@ u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data)
 {
 	// Patch texture addresses
 	if ((reg >= BPMEM_TX_SETIMAGE3   && reg < BPMEM_TX_SETIMAGE3 + 4) ||
-		(reg >= BPMEM_TX_SETIMAGE3_4 && reg < BPMEM_TX_SETIMAGE3_4+4))
+		(reg >= BPMEM_TX_SETIMAGE3_4 && reg < BPMEM_TX_SETIMAGE3_4+4) ||
+		reg == BPMEM_PRELOAD_ADDR || reg == BPMEM_LOADTLUT0 || reg == BPMEM_EFB_ADDR)
 	{
-		const u32 addr = data << 5; // TODO: Proper mask?
-		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-		const u32 new_value = new_addr >> 5;
-		return new_value;
-	}
-	else if (reg == BPMEM_PRELOAD_ADDR)
-	{
-		// TODO
-		return data;
-	}
-	else if (reg == BPMEM_LOADTLUT0)
-	{
-		// TODO: Untested
-		const u32 addr = data << 5; // TODO: Proper mask?
-		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
-		const u32 new_value = new_addr >> 5;
-		return new_value;
-	}
-	// TODO: Check for BPMEM_PRELOAD_MODE
-	else if (reg == BPMEM_EFB_ADDR)
-	{
-		const u32 addr = data << 5; // TODO
+		const u32 addr = data << 5;
 		const u32 new_addr = MEM_VIRTUAL_TO_PHYSICAL(GetPointer(addr));
 		const u32 new_value = new_addr >> 5;
 		return new_value;
