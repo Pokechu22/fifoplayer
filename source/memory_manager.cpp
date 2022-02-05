@@ -116,23 +116,24 @@ bool PrepareMemoryLoad(u32 start_addr, u32 size)
 
 	std::vector<u32> affected_elements;
 	u32 new_start_addr = start_addr;
-	u32 new_end_addr = start_addr + size - 1;
+	u32 new_end_addr = start_addr + size;
 
 	// Find overlaps with existing memory chunks
-	for (auto it = memory_map.begin(); it != memory_map.end(); ++it)
+	for (auto& entry : memory_map)
 	{
-		if (IntersectsMemoryRange(it->first, it->second.size, start_addr, size))
+		const u32 other_addr = entry.first;
+		const u32 other_size = entry.second.size;
+		const u32 other_end_addr = other_addr + other_size;
+		if (IntersectsMemoryRange(other_addr, other_size, start_addr, size))
 		{
-			affected_elements.push_back(it->first);
-			if (it->first < new_start_addr)
-				new_start_addr = it->first;
-			if (it->first + it->second.size > new_end_addr + 1)
-				new_end_addr = it->first + it->second.size - 1;
+			affected_elements.push_back(other_addr);
+			new_start_addr = std::min(new_start_addr, other_addr);
+			new_end_addr = std::max(new_end_addr, other_end_addr);
 		}
 	}
 
 	aligned_buf& new_memchunk(memory_map[new_start_addr]); // creates a new vector or uses the existing one
-	u32 new_size = new_end_addr - new_start_addr + 1;
+	u32 new_size = new_end_addr - new_start_addr;
 
 	// if the new memory range is inside an existing chunk, there's nothing to do
 	if (new_memchunk.size == new_size)
@@ -167,9 +168,14 @@ u8* GetPointer(u32 addr)
 {
 	addr = FixupMemoryAddress(addr);
 
-	for (auto it = memory_map.begin(); it != memory_map.end(); ++it)
-		if (addr >= it->first && addr < it->first + it->second.size)
-			return &it->second.buf[addr - it->first];
+	for (auto& entry : memory_map)
+	{
+		const u32 start_addr = entry.first;
+		const u32 size = entry.second.size;
+		const u32 end_addr = start_addr + size;
+		if (addr >= start_addr && addr < end_addr)
+			return &entry.second.buf[addr - start_addr];
+	}
 
 	if (addr != 0) {
 		// Translating a null pointer to 0 is fine; presumably the game won't use it
@@ -183,4 +189,21 @@ u8* GetPointer(u32 addr)
 		printf("Failed to find pointer for addr %x\n", addr);
 	}
 	return NULL;
+}
+
+void PrintMemoryMap() {
+	printf("%d entries:\n", memory_map.size());
+	u32 prev_end_addr = 0;
+	for (auto& entry : memory_map)
+	{
+		const u32 start_addr = entry.first;
+		const u32 size = entry.second.size;
+		const u32 end_addr = start_addr + size;
+		printf("- %x to %x (size %x): mapped to %p\n", start_addr, end_addr, size, entry.second.buf);
+		if (prev_end_addr > start_addr)
+		{
+			printf("Overlaps!!!!!\n");
+		}
+		prev_end_addr = end_addr;
+	}
 }

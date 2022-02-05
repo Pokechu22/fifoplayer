@@ -33,3 +33,5 @@ bool PrepareMemoryLoad(u32 start_addr, u32 size);
 
 // Must have been reserved via PrepareMemoryLoad first
 u8* GetPointer(u32 addr);
+
+void PrintMemoryMap();
