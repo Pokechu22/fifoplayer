@@ -10,18 +10,18 @@ class aligned_buf
 {
 public:
 	aligned_buf();
-	aligned_buf(int alignment);
+	aligned_buf(u32 alignment);
 	~aligned_buf();
 
 	aligned_buf(const aligned_buf& oth);
 
-	void resize(int new_size);
+	void resize(u32 new_size);
 
 	u8* buf;
-	int size;
+	u32 size;
 
 private:
-	int alignment;
+	u32 alignment;
 };
 
 bool IntersectsMemoryRange(u32 start1, u32 size1, u32 start2, u32 size2);

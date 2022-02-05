@@ -22,7 +22,7 @@ aligned_buf::aligned_buf() : buf(NULL), size(0), alignment(DEF_ALIGN)
 
 }
 
-aligned_buf::aligned_buf(int alignment) : buf(NULL), size(0), alignment(alignment)
+aligned_buf::aligned_buf(u32 alignment) : buf(NULL), size(0), alignment(alignment)
 {
 
 }
@@ -48,7 +48,7 @@ aligned_buf::aligned_buf(const aligned_buf& oth)
 	alignment = oth.alignment;
 }
 
-void aligned_buf::resize(int new_size)
+void aligned_buf::resize(u32 new_size)
 {
 	if (!buf)
 	{
