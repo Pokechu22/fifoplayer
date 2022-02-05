@@ -83,14 +83,17 @@ u32 FixupMemoryAddress(u32 addr)
 	{
 		case 0x0:
 		case 0x8:
-			addr &= 0x1FFFFFF; // RAM_MASK
+			addr &= 0x01FFFFFF; // RAM_MASK
 			break;
 
 		case 0x1:
 		case 0x9:
 		case 0xd:
 			// TODO: Iff Wii
-			addr &= 0x3FFFFFF; // EXRAM_MASK
+			addr &= 0x03FFFFFF; // EXRAM_MASK
+			// Include the top bit that indicates that this is in MEM2
+			// (otherwise, MEM1 and MEM2 get mapped to the same place and clash with each other)
+			addr |= 0x10000000;
 			break;
 
 		default:
