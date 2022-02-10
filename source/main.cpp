@@ -503,7 +503,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 		if (screenshot)
 		{
 			GX_Flush();
-			GX_WaitDrawDone();
+			GX_DrawDone();
 
 			GXColor color;
 			for (u32 y = 0; y < cur_analyzed_frame.efb_height; y++)
@@ -536,7 +536,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 		wgPipe->U32 = (BPMEM_TRIGGER_EFB_COPY << 24) | copy.Hex;
 
 		GX_Flush();
-		GX_WaitDrawDone();
+		GX_DrawDone();
 
 		// TODO: This isn't quite perfect, but it at least means that we
 		// have the right width (height might be wrong, e.g. for NES games)
