@@ -359,6 +359,18 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 					u32 off = update.address % DEF_ALIGN;
 					DCFlushRange(GetPointer(update.address) - off, update.dataSize + off);
 					update_num++;
+					if (update.type == DffMemoryUpdate::Type::TEXTURE_MAP)
+					{
+						// GX_InvalidateTexAll, except we aren't re-flushing the state
+						// I don't 100% understand why this is needed, but maybe we're putting
+						// things in memory in a different order that causes texture cache
+						// problems?  This does break the HW fifoplayer for testing actual
+						// texture cache issues though.
+						wgPipe->U8 = GX_LOAD_BP_REG;
+						wgPipe->U32 = 0x66001000;
+						wgPipe->U8 = GX_LOAD_BP_REG;
+						wgPipe->U32 = 0x66001100;
+					}
 				}
 				else
 				{
