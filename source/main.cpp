@@ -234,6 +234,7 @@ static void *frameBuffer[2] = { NULL, NULL};
 static u32* screenshot_buffer = NULL;
 static char* screenshot_dir = NULL;
 
+void PrepareScreenshot(u32 left, u32 top, u32 width, u32 height);
 void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height);
 
 GXRModeObj *rmode;
@@ -514,23 +515,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 	{
 		if (screenshot)
 		{
-			GX_Flush();
-			GX_DrawDone();
-
-			GXColor color;
-			for (u32 y = 0; y < cur_analyzed_frame.efb_height; y++)
-			{
-				for (u32 x = 0; x < cur_analyzed_frame.efb_width; x++)
-				{
-					GX_PeekARGB(x + cur_analyzed_frame.efb_left, y + cur_analyzed_frame.efb_top, &color);
-					u32 val = ((u32) color.a) << 24;
-					val |= ((u32) color.r) << 16;
-					val |= ((u32) color.g) << 8;
-					val |= color.b;
-
-					screenshot_buffer[x + y * EFB_WIDTH] = val;
-				}
-			}
+			PrepareScreenshot(cur_analyzed_frame.efb_left, cur_analyzed_frame.efb_top, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
 		}
 
 		// finish frame for legacy dff files
@@ -681,6 +666,26 @@ int main()
 	fclose(fifo_data.file);
 
 	return 0;
+}
+
+void PrepareScreenshot(u32 left, u32 top, u32 width, u32 height) {
+	GX_Flush();
+	GX_DrawDone();
+
+	GXColor color;
+	for (u32 y = 0; y < height; y++)
+	{
+		for (u32 x = 0; x < width; x++)
+		{
+			GX_PeekARGB(x + left, y + top, &color);
+			u32 val = ((u32) color.a) << 24;
+			val |= ((u32) color.r) << 16;
+			val |= ((u32) color.g) << 8;
+			val |= color.b;
+
+			screenshot_buffer[x + y * EFB_WIDTH] = val;
+		}
+	}
 }
 
 void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
