@@ -689,7 +689,7 @@ void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
 		time(&rawtime);
 		struct tm* curtime = localtime(&rawtime);
 		screenshot_dir = (char*)malloc(100);
-		strftime(screenshot_dir, 100, "sd:/Test_%H%M%S", curtime);
+		strftime(screenshot_dir, 100, "sd:/Test_%y%m%d_%H%M%S", curtime);
 		mkdir(screenshot_dir, 0777);
 	}
 
