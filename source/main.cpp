@@ -37,9 +37,9 @@ typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint8_t u8;
 
-f32 view_scale = 1.0f;
-s32 x_offset = 0;
-s32 y_offset = 0;
+f32 g_view_scale = 1.0f;
+s32 g_x_offset = 0;
+s32 g_y_offset = 0;
 
 static vu16* const _viReg = (u16*)0xCC002000;
 using namespace VideoInterface;
@@ -421,13 +421,13 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 					f32 value_f;
 					memcpy(&value_f, &cmd_data[5+4*i], sizeof(f32));
 					if (address == 0x101a || address == 0x101b) {  // viewport width/height
-						value_f *= view_scale;
+						value_f *= g_view_scale;
 					}
 					if (address == 0x101d) {  // viewport x orig
-						value_f -= s32(cur_analyzed_frame.efb_width) * x_offset;
+						value_f -= s32(cur_analyzed_frame.efb_width) * g_x_offset;
 					}
 					if (address == 0x101e) {  // viewport y orig
-						value_f -= s32(cur_analyzed_frame.efb_height) * y_offset;
+						value_f -= s32(cur_analyzed_frame.efb_height) * g_y_offset;
 					}
 					wgPipe->F32 = value_f;
 				}
@@ -636,36 +636,36 @@ int main()
 		}
 
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP)
-			y_offset--;
+			g_y_offset--;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN)
-			y_offset++;
+			g_y_offset++;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT)
-			x_offset--;
+			g_x_offset--;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT)
-			x_offset++;
+			g_x_offset++;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_MINUS)
-			view_scale /= 2;
+			g_view_scale /= 2;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_PLUS)
-			view_scale *= 2;
+			g_view_scale *= 2;
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A)
 		{
-			f32 old_view_scale = view_scale;
-			s32 old_x_offset = x_offset;
-			s32 old_y_offset = y_offset;
-			view_scale = 4.0f;
+			f32 old_view_scale = g_view_scale;
+			s32 old_x_offset = g_x_offset;
+			s32 old_y_offset = g_y_offset;
+			g_view_scale = 4.0f;
 			for (int y = -2; y <= 2; y++) {
 				for (int x = -2; x <= 2; x++) {
-					x_offset = x;
-					y_offset = y;
+					g_x_offset = x;
+					g_y_offset = y;
 					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
 					SaveScreenshot(screenshot_number, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
 				}
 			}
 			// To combine images, use ImageMagick - see https://superuser.com/a/290679
 			// montage -mode concatenate -tile 5x5 1_y{-2..2}_x{-2..2}_scale2.png 1.png
-			view_scale = old_view_scale;
-			x_offset = old_x_offset;
-			y_offset = old_y_offset;
+			g_view_scale = old_view_scale;
+			g_x_offset = old_x_offset;
+			g_y_offset = old_y_offset;
 			screenshot_number++;
 		}
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B)
@@ -694,16 +694,16 @@ void SaveScreenshot(int screenshot_number, u32 efb_width, u32 efb_height) {
 	}
 
 	char filename[256];
-	if (view_scale != 1.0f)
+	if (g_view_scale != 1.0f)
 	{
 		// Order of y then x matters for combining images
 		snprintf(filename, sizeof(filename), "%s/%d_y%d_x%d_scale%d.png",
-		         screenshot_dir, screenshot_number, y_offset, x_offset, (int)log2(view_scale));
+		         screenshot_dir, screenshot_number, g_y_offset, g_x_offset, (int)log2(g_view_scale));
 	}
 	else
 	{
 		snprintf(filename, sizeof(filename), "%s/%d_y%d_x%d.png",
-		         screenshot_dir, screenshot_number, y_offset, x_offset);
+		         screenshot_dir, screenshot_number, g_y_offset, g_x_offset);
 	}
 
 	png_bytep *row_pointers = (png_bytep *) malloc(efb_height * sizeof(png_bytep));
