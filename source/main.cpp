@@ -41,6 +41,8 @@ f32 g_view_scale = 1.0f;
 s32 g_x_offset = 0;
 s32 g_y_offset = 0;
 
+int g_screenshot_number = 1;
+
 static vu16* const _viReg = (u16*)0xCC002000;
 using namespace VideoInterface;
 
@@ -328,7 +330,7 @@ u32 TransformBPReg(u8 reg, u32 data, const FifoData& fifo_data)
 	}
 }
 
-void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem, bool screenshot) {
+void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<AnalyzedFrameInfo>& analyzed_frames, CPMemory& cpmem, bool screenshot_on_copy, bool screenshot_end) {
 	const FifoFrameData& cur_frame_data = fifo_data.frames[cur_frame];
 	const AnalyzedFrameInfo& cur_analyzed_frame = analyzed_frames[cur_frame];
 	if (cur_frame == 0) // TODO: Check for first_frame instead and apply previous state changes
@@ -386,6 +388,10 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			{
 				const u32 value = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
 				const u8 cmd2 = (value >> 24);
+				if (screenshot_on_copy && cmd2 == BPMEM_TRIGGER_EFB_COPY) {
+					PrepareScreenshot(cur_analyzed_frame.efb_left, cur_analyzed_frame.efb_top, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
+					SaveScreenshot(g_screenshot_number++, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
+				}
 				const u32 data = value & 0xffffff;
 				const u32 new_data = TransformBPReg(cmd2, data, fifo_data);
 				const u32 new_value = (cmd2 << 24) | (new_data & 0xffffff);
@@ -513,7 +519,7 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 #if ENABLE_CONSOLE!=1
 	if (fifo_data.version < 2)
 	{
-		if (screenshot)
+		if (screenshot_end)
 		{
 			PrepareScreenshot(cur_analyzed_frame.efb_left, cur_analyzed_frame.efb_top, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
 		}
@@ -590,12 +596,11 @@ int main()
 	int first_frame = 0;
 	int last_frame = first_frame + fifo_data.frames.size()-1;
 	int cur_frame = first_frame;
-	int screenshot_number = 1;
 	while (processing)
 	{
 		CheckForNetworkEvents(server_socket, client_socket, fifo_data.frames, analyzed_frames);
 
-		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false);
+		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false, false);
 
 		// TODO: Menu stuff
 		// reset GX state
@@ -642,8 +647,8 @@ int main()
 				for (int x = -2; x <= 2; x++) {
 					g_x_offset = x;
 					g_y_offset = y;
-					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
-					SaveScreenshot(screenshot_number, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
+					DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false, true);
+					SaveScreenshot(g_screenshot_number, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
 				}
 			}
 			// To combine images, use ImageMagick - see https://superuser.com/a/290679
@@ -651,12 +656,17 @@ int main()
 			g_view_scale = old_view_scale;
 			g_x_offset = old_x_offset;
 			g_y_offset = old_y_offset;
-			screenshot_number++;
+			g_screenshot_number++;
 		}
 		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B)
 		{
-			DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true);
-			SaveScreenshot(screenshot_number++, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
+			DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false, true);
+			SaveScreenshot(g_screenshot_number++, analyzed_frames[cur_frame].efb_width, analyzed_frames[cur_frame].efb_height);
+		}
+		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_2)
+		{
+			// Calls SaveScreenshot internally
+			DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, true, false);
 		}
 
 		++cur_frame;
