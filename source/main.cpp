@@ -338,6 +338,11 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 		ApplyInitialState(fifo_data, cpmem, analyzed_frames);
 	}
 
+	u32 efb_left = cur_analyzed_frame.efb_left;
+	u32 efb_top = cur_analyzed_frame.efb_top;
+	u32 efb_width = cur_analyzed_frame.efb_width;
+	u32 efb_height = cur_analyzed_frame.efb_height;
+
 	u32 update_num = 0;
 	for (auto& cur_object : cur_analyzed_frame.objects)
 	{
@@ -388,13 +393,23 @@ void DrawFrame(u32 cur_frame, const FifoData& fifo_data, const std::vector<Analy
 			{
 				const u32 value = *(u32*)&cmd_data[1]; // TODO: Endianness (only works on Wii)
 				const u8 cmd2 = (value >> 24);
-				if (screenshot_on_copy && cmd2 == BPMEM_TRIGGER_EFB_COPY) {
-					PrepareScreenshot(cur_analyzed_frame.efb_left, cur_analyzed_frame.efb_top, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
-					SaveScreenshot(g_screenshot_number++, cur_analyzed_frame.efb_width, cur_analyzed_frame.efb_height);
-				}
 				const u32 data = value & 0xffffff;
 				const u32 new_data = TransformBPReg(cmd2, data, fifo_data);
 				const u32 new_value = (cmd2 << 24) | (new_data & 0xffffff);
+				if (cmd2 == BPMEM_EFB_TL)
+				{
+					efb_left = new_data & 0x3ff;
+					efb_top = (new_data >> 10) & 0x3ff;
+				}
+				if (cmd2 == BPMEM_EFB_WH)
+				{
+					efb_width = (new_data & 0x3ff) + 1;
+					efb_height = ((new_data >> 10) & 0x3ff) + 1;
+				}
+				if (screenshot_on_copy && cmd2 == BPMEM_TRIGGER_EFB_COPY) {
+					PrepareScreenshot(efb_left, efb_top, efb_width, efb_height);
+					SaveScreenshot(g_screenshot_number++, efb_width, efb_height);
+				}
 #if ENABLE_CONSOLE!=1
 				wgPipe->U8 = GX_LOAD_BP_REG;
 				wgPipe->U32 = new_value;
