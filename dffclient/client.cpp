@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QFileDialog>
 #include <QFile>
+#include <QImage>
 #include <QProgressBar>
 #include <QTreeView>
 #include <QSignalMapper>
@@ -616,8 +617,10 @@ ServerWidget::ServerWidget() : QWidget()
 	// TODO: Change the lineedit text to be a default text?
 	dffpath = new QLineEdit("");
 	dffpath->setReadOnly(true);
-	QPushButton* openDffFile = new QPushButton(style()->standardIcon(QStyle::SP_DirOpenIcon), "");
-	QPushButton* loadDffFile = new QPushButton(tr("Load"));
+	QPushButton* openDffFile = new QPushButton(style()->standardIcon(QStyle::SP_DirOpenIcon), "Open");
+	QPushButton* loadDffFile = new QPushButton(tr("Upload"));
+	QPushButton* takeScreenshot = new QPushButton(tr("Take Screenshot"));
+	QPushButton* saveScreenshot = new QPushButton(tr("Save Screenshot"));
 
 	QProgressBar* progress_bar = new QProgressBar;
 	connect(this, SIGNAL(ShowProgressBar()), progress_bar, SLOT(show()));
@@ -628,6 +631,8 @@ ServerWidget::ServerWidget() : QWidget()
 
 	connect(openDffFile, SIGNAL(clicked()), this, SLOT(OnSelectDff()));
 	connect(loadDffFile, SIGNAL(clicked()), this, SLOT(OnLoadDff()));
+	connect(takeScreenshot, SIGNAL(clicked()), this, SLOT(OnGetScreenshot()));
+	connect(saveScreenshot, SIGNAL(clicked()), this, SLOT(OnSaveScreenshot()));
 
 	DffView* dff_view = new DffView(this);
 	DffModel* dff_model = new DffModel(this);
@@ -667,11 +672,18 @@ ServerWidget::ServerWidget() : QWidget()
 	QPushButton* optimize_fifostream_button = new QPushButton(tr("Optimize FIFO Stream"));
 	connect(optimize_fifostream_button, SIGNAL(clicked()), dff_model, SLOT(Optimize()));
 
+	QLabel* display = new QLabel;
+	display->setPixmap(QPixmap(QSize(640, 480)));
+	connect(this, SIGNAL(SetPixmap(const QPixmap&)), display, SLOT(setPixmap(const QPixmap&)));
+
+	QHBoxLayout* total_layout = new QHBoxLayout;
 	QVBoxLayout* main_layout = new QVBoxLayout;
 	{
 		QHBoxLayout* layout = new QHBoxLayout;
 		layout->addWidget(hostname);
 		layout->addWidget(try_connect);
+		layout->addWidget(takeScreenshot);
+		layout->addWidget(saveScreenshot);
 		main_layout->addLayout(layout);
 	}
 	{
@@ -712,7 +724,11 @@ ServerWidget::ServerWidget() : QWidget()
 	{
 		main_layout->addWidget(optimize_fifostream_button);
 	}
-	setLayout(main_layout);
+	{
+		total_layout->addWidget(display);
+		total_layout->addLayout(main_layout);
+		setLayout(total_layout);
+	}
 }
 
 // progress_callback takes a) the current progress as an arbitrary integer b) the progress value that corresponds to "completed task"
@@ -744,6 +760,44 @@ void WriteStreamDff(int socket, QString filename, std::function<void(int,int)> p
 	file.close();
 }
 
+std::unique_ptr<QImage> ReceiveImage(int socket, std::function<void(int,int)> progress_callback)
+{
+	progress_callback(0, 1);
+
+	u8 cmd = CMD_SCREENSHOT;
+	netqueue->PushCommand(&cmd, sizeof(cmd));
+	netqueue->Flush();
+
+	u32 metadata[3];
+	recv(socket, &metadata, sizeof(metadata), 0);
+	u32 stride = ntohl(metadata[0]);
+	u32 width = ntohl(metadata[1]);
+	u32 height = ntohl(metadata[2]);
+
+	qDebug() << "Received image size" << width << "x" << height << "with stride" << stride;
+
+	int size = stride * height * sizeof(u32);
+	uchar* buf = new uchar[size];
+	for (int pos = 0; pos < size;)
+	{
+		progress_callback(pos, size);
+		int chunk_size = std::min(size - pos, dff_stream_chunk_size);
+		pos += recv(socket, buf + pos, chunk_size, 0);
+	}
+	qDebug() << "Received complete image.";
+
+	qsizetype bytesPerLine = stride * sizeof(u32);
+	for (int y = 0; y < height; ++y)
+	{
+		for (int x = 0; x < width; ++x)
+		{
+			u32 &val = ((u32*)buf)[x + y * stride];
+			val = ntohl(val);
+		}
+	}
+	return std::make_unique<QImage>(buf, width, height, bytesPerLine, QImage::Format::Format_ARGB32, free, buf);
+}
+
 void ServerWidget::OnSelectDff()
 {
 	QString filename = QFileDialog::getOpenFileName(this, tr("Select a dff file ..."), QString(), tr("Dolphin Fifo Files (*.dff)"));
@@ -766,6 +820,22 @@ void ServerWidget::OnLoadDff()
 	emit ShowProgressBar();
 	WriteStreamDff(client->socket, dffpath->text(), std::bind(&ServerWidget::OnSetProgress, this, _1, _2));
 	emit HideProgressBar();
+}
+
+void ServerWidget::OnGetScreenshot()
+{
+	using namespace std::placeholders;
+
+	emit ShowProgressBar();
+	image = ReceiveImage(client->socket, std::bind(&ServerWidget::OnSetProgress, this, _1, _2));
+	emit HideProgressBar();
+	emit SetPixmap(QPixmap::fromImage(*image));
+}
+
+void ServerWidget::OnSaveScreenshot()
+{
+	QString fileName = QFileDialog::getSaveFileName(this, "Save Screenshot");
+	image->save(fileName);
 }
 
 void ServerWidget::OnTryConnect()

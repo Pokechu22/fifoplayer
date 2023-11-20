@@ -13,7 +13,7 @@ endif()
 include(CheckIncludeFiles)
 check_include_files(endian.h HAVE_ENDIAN_H)
 
-set(CMAKE_CXX_FLAGS "-std=c++11")
+set(CMAKE_CXX_FLAGS "-std=c++20")
 if(HAVE_ENDIAN_H)
 	add_definitions("-DHAVE_ENDIAN_H")
 endif(HAVE_ENDIAN_H)

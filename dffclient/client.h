@@ -2,8 +2,12 @@
 #include <QAbstractItemModel>
 #include <QTreeView>
 
+#include <memory>
 #include <vector>
 
+class QLabel;
+class QImage;
+class QPixmap;
 class QLineEdit;
 class QModelIndex;
 class QItemSelection;
@@ -120,6 +124,8 @@ public slots:
 
 	void OnSelectDff();
 	void OnLoadDff();
+	void OnGetScreenshot();
+	void OnSaveScreenshot();
 
 	void OnSetProgress(int current, int max);
 
@@ -130,9 +136,11 @@ signals:
 	void HideProgressBar();
 	void SetProgressBarMax(int max);
 	void SetProgressBarValue(int value);
+	void SetPixmap(const QPixmap&);
 
 private:
 	DffClient* client;
 	QLineEdit* hostname;
 	QLineEdit* dffpath;
+	std::unique_ptr<QImage> image;
 };
