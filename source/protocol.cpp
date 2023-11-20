@@ -62,8 +62,7 @@ void ReadStreamedDff(int socket, bool (*recv_callback)(void))
 
 int WaitForConnection(int& server_socket)
 {
-	int addrlen;
-	struct sockaddr_in my_name, peer_name;
+	struct sockaddr_in my_name;
 	int status;
 
 	server_socket = net_socket(AF_INET, SOCK_STREAM, 0);
@@ -114,7 +113,6 @@ int WaitForConnection(int& server_socket)
 
 void ReadCommandEnable(int socket, std::vector<AnalyzedFrameInfo>& analyzed_frames, bool enable)
 {
-	char cmd;
 	u32 frame_idx;
 	u32 object;
 	u32 offset;
@@ -146,7 +144,6 @@ void ReadCommandEnable(int socket, std::vector<AnalyzedFrameInfo>& analyzed_fram
 
 void ReadCommandPatch(int socket, std::vector<FifoFrameData>& frames)
 {
-	char cmd;
 	u32 frame_idx;
 	u32 size;
 	u32 offset;
@@ -176,8 +173,25 @@ void ReadCommandPatch(int socket, std::vector<FifoFrameData>& frames)
 	// TODO: Need to update frame analysis here..
 }
 
+void SendScreenshot(int client_socket, void* buffer, u32 buffer_width, u32 efb_width, u32 efb_height)
+{
+	u32 metadata[3]{
+		htonl(buffer_width),
+		htonl(efb_width),
+		htonl(efb_height)
+	};
+	net_send(client_socket, &metadata, sizeof(metadata), 0);
+	int size = buffer_width * efb_height * sizeof(u32);
+	for (int pos = 0; pos < size;)
+		pos += net_send(client_socket, (u8*)buffer + pos, std::min(size - pos, dff_stream_chunk_size), 0);
+}
 
-void CheckForNetworkEvents(int server_socket, int client_socket, std::vector<FifoFrameData>& frames, std::vector<AnalyzedFrameInfo>& analyzed_frames)
+void CheckForNetworkEvents(
+	int server_socket,
+	int client_socket,
+	std::vector<FifoFrameData>& frames,
+	std::vector<AnalyzedFrameInfo>& analyzed_frames,
+	bool* screenshot)
 {
 #if 0
 	fd_set readset;
@@ -261,6 +275,13 @@ void CheckForNetworkEvents(int server_socket, int client_socket, std::vector<Fif
 			case CMD_PATCH_COMMAND:
 				ReadCommandPatch(client_socket, frames);
 				break;
+
+			case CMD_SCREENSHOT:
+				*screenshot = true;
+				break;
+
+			case CMD_TERMINATE:
+				exit(0);
 
 			default:
 				printf("Received unknown command: %d\n", cmd);

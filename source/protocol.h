@@ -13,6 +13,8 @@
 #define CMD_ENABLE_COMMAND 0x05 // Enable current command
 #define CMD_DISABLE_COMMAND 0x06 // Enable current command
 #define CMD_PATCH_COMMAND 0x07 // Patch a certain command
+#define CMD_SCREENSHOT 0x08 // Send a screenshot to the client
+#define CMD_TERMINATE 0x09 // Stop the server
 
 #define RET_FAIL 0
 #define RET_SUCCESS 1
@@ -40,6 +42,7 @@ int ReadHandshake(int socket);
 void ReadStreamedDff(int socket, bool (*recv_callback)(void)); // if the callback returns true, the function will abort streaming
 void ReadCommandEnable(int socket, std::vector<AnalyzedFrameInfo>& analyzed_frames, bool enable);
 void ReadCommandPatch(int socket, std::vector<FifoFrameData>& frames);
-void CheckForNetworkEvents(int server_socket, int client_socket, std::vector<FifoFrameData>& frames, std::vector<AnalyzedFrameInfo>& analyzed_frames);
+void CheckForNetworkEvents(int server_socket, int client_socket, std::vector<FifoFrameData>& frames, std::vector<AnalyzedFrameInfo>& analyzed_frames, bool* screenshot);
+void SendScreenshot(int client_socket, void* buffer, uint32_t buffer_width, uint32_t efb_width, uint32_t efb_height);
 
 #endif // FIFOPLAYER_PROTOCOL_H

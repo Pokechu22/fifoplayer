@@ -606,11 +606,20 @@ int main()
 	int last_frame = first_frame + fifo_data.frames.size()-1;
 	int cur_frame = first_frame;
 	int screenshot_number = 1;
+	bool screenshot = false;
 	while (processing)
 	{
-		CheckForNetworkEvents(server_socket, client_socket, fifo_data.frames, analyzed_frames);
+		CheckForNetworkEvents(server_socket, client_socket, fifo_data.frames, analyzed_frames, &screenshot);
 
-		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, false);
+		DrawFrame(cur_frame, fifo_data, analyzed_frames, cpmem, screenshot);
+
+		if (screenshot)
+		{
+			SendScreenshot(client_socket, screenshot_buffer, EFB_WIDTH,
+				analyzed_frames[cur_frame].efb_width,
+				analyzed_frames[cur_frame].efb_height);
+			screenshot = false;
+		}
 
 		// TODO: Menu stuff
 		// reset GX state
