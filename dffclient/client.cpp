@@ -556,7 +556,7 @@ void DffView::EnableIndexRecursively(const QModelIndex& index, bool enable, bool
 	if (index.data(DffModel::UserRole_Type).toInt() != DffModel::IDX_COMMAND)
 	{
 		for (int i = 0; i < model()->rowCount(index); ++i)
-			EnableIndexRecursively(index.child(i, 0), enable, geometry_only);
+			EnableIndexRecursively(model()->index(i, 0, index), enable, geometry_only);
 
 		return;
 	}

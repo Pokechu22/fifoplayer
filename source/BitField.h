@@ -45,7 +45,7 @@ public:
 	}
 
 private:
-	constexpr u32 GetMask()
+	constexpr u32 GetMask() const
 	{
 		return ((bits == 32) ? 0xFFFFFFFF : ((1 << bits)-1)) << position;
 	}

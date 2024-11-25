@@ -3,6 +3,7 @@
 #include <QSpinBox>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QStringList>
 #include <stdint.h>
 
 #include <vector>
@@ -14,7 +15,6 @@ typedef uint32_t u32;
 class QString;
 class QModelIndex;
 class QByteArray;
-class QStringList;
 
 class LayoutStream : public QVBoxLayout
 {
